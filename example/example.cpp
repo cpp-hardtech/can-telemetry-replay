@@ -20,7 +20,8 @@ can_frame generate_frame() {
 	static std::uniform_int_distribution<int64_t> frame_data_dist(LLONG_MIN, LLONG_MAX); // random 64-bit signed integer
 	static std::uniform_int_distribution<int64_t> can_id_dist(1, 7); // 7 is the highest can_id in example.dbc
 
-	can_frame frame;
+	can_frame frame{};
+	frame.len = CAN_MAX_DLEN;
 	*(int64_t*)frame.data = frame_data_dist(generator);
 	frame.can_id = can_id_dist(generator); 
 

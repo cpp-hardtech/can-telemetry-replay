@@ -40,11 +40,11 @@ class tr_signal {
 	sig_codec _codec;
 
 	std::string _agg_type = "LAST";
-	val_type_t _val_type = i64;
+	val_type_t _val_type;
 	std::optional<int64_t> _mux_val; 
 public:
 	tr_signal(std::string name, sig_codec codec, std::optional<int64_t> mux_val)
-		: _name(std::move(name)), _codec(codec), _mux_val(mux_val)
+		: _name(std::move(name)), _codec(codec), _val_type(codec.sign_type() == '+' ? u64 : i64), _mux_val(mux_val)
 	{}
 
 	const std::string& name() const { return _name; }
@@ -99,6 +99,7 @@ class tx_group {
 		canid_t message_id;
 		int64_t message_mux;
 		uint64_t mdata;
+		uint8_t len;
 	};
 
 	std::string _name;
@@ -122,14 +123,14 @@ private:
 	bool all_collected() const;
 	void assign(canid_t message_id, int64_t message_mux);
 	bool within_interval(can_time stamp) const;
-	void add_clumped(can_time stamp, canid_t message_id, int64_t message_mux, uint64_t cval);
+	void add_clumped(can_time stamp, canid_t message_id, int64_t message_mux, uint64_t cval, uint8_t len);
 };
 
 class tr_message {
 	std::vector<tr_signal> _signals;
 	std::optional<tr_muxer> _mux;
 
-	std::vector<sig_asm> _sig_asms;
+	std::optional<std::vector<sig_asm>> _sig_asms;
 	tx_group* _tx_group = nullptr;
 	can_time _last_stamp;
 

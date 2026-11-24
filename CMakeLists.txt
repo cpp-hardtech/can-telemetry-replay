@@ -23,6 +23,9 @@ install(TARGETS can-telemetry-replay)
 install(FILES LICENSE NOTICE LICENSES/Linux-CAN.txt DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
 if(BUILD_TESTING)
+  add_executable(v2c-aggregation-test tests/v2c_aggregation.cpp)
+  target_link_libraries(v2c-aggregation-test PRIVATE can_telemetry_core)
+  add_test(NAME v2c-aggregation COMMAND v2c-aggregation-test)
   add_test(NAME offline-replay
     COMMAND "${CMAKE_COMMAND}"
       "-DREPLAY=$<TARGET_FILE:can-telemetry-replay>"

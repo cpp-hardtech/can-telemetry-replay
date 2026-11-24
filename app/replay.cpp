@@ -158,8 +158,7 @@ void replay(const Database& db, const char* path) {
             fail("expected up to 8 hexadecimal payload bytes");
         }
 
-        // The codec reads an eight-byte word beginning at the signal's first byte.
-        std::array<std::uint8_t, 2 * CAN_MAX_DLEN> data{};
+        std::array<std::uint8_t, CAN_MAX_DLEN> data{};
         const auto count = bytes.size() / 2;
         for (std::size_t byte = 0; byte < count; ++byte) {
             if (!parse_number(std::string_view{bytes}.substr(byte * 2, 2), data[byte], 16)) {
