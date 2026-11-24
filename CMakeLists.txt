@@ -28,4 +28,8 @@ if(BUILD_TESTING)
       "-DREPLAY=$<TARGET_FILE:can-telemetry-replay>"
       "-DEXAMPLES=${CMAKE_CURRENT_SOURCE_DIR}/example"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/replay.cmake")
+  add_test(NAME extended-multiplex-replay
+    COMMAND "${CMAKE_COMMAND}"
+      "-DREPLAY=$<TARGET_FILE:can-telemetry-replay>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/extended-multiplex.cmake")
 endif()
