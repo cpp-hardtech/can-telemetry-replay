@@ -104,3 +104,16 @@ set(expected "${csv_header}\"1.234567\",\"s\",\"vcan0\",\"101\",\"Counter\",\"Ti
 if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUAL "")
   message(FATAL_ERROR "Physical CSV replay exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
 endif()
+
+if(EXISTS "/dev/full")
+  execute_process(
+    COMMAND "${REPLAY}" --csv "${EXAMPLES}/example.dbc" "${EXAMPLES}/replay.log"
+    OUTPUT_FILE "/dev/full"
+    RESULT_VARIABLE result
+    ERROR_VARIABLE errors
+    TIMEOUT 3
+  )
+  if(NOT result STREQUAL "1" OR NOT errors MATCHES "could not write replay output")
+    message(FATAL_ERROR "Replay with a full output device exited ${result}\nStderr:\n${errors}")
+  endif()
+endif()
