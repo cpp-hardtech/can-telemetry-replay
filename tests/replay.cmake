@@ -11,6 +11,21 @@ if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUA
   message(FATAL_ERROR "Replay exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
 endif()
 
+string(ASCII 239 187 191 utf8_bom)
+file(READ "${EXAMPLES}/example.dbc" dbc_contents)
+set(bom_database "${CMAKE_CURRENT_BINARY_DIR}/utf8-with-bom.dbc")
+file(WRITE "${bom_database}" "${utf8_bom}${dbc_contents}")
+execute_process(
+  COMMAND "${REPLAY}" "${bom_database}" "${EXAMPLES}/replay.log"
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE output
+  ERROR_VARIABLE errors
+  TIMEOUT 3
+)
+if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUAL "")
+  message(FATAL_ERROR "UTF-8 BOM replay exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
+endif()
+
 execute_process(
   COMMAND "${REPLAY}" "${CMAKE_CURRENT_LIST_DIR}/multiplex.dbc" "${CMAKE_CURRENT_LIST_DIR}/multiplex.log"
   RESULT_VARIABLE result

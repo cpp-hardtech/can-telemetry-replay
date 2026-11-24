@@ -46,6 +46,7 @@ in either byte order and a single multiplexor per message. Values are printed be
 DBC scaling and offsets. File order is preserved without waiting between frames.
 The log format represents Classic CAN data frames. The DBC reader rejects
 floating-point signals and extended multiplexing in replay mode.
+DBC files may start with a UTF-8 byte order mark (BOM).
 
 ## Library components
 

@@ -664,6 +664,10 @@ static bool syntax_error(std::string_view where, std::string_view what = "") {
 }
 
 bool parse_dbc(std::string_view dbc_src, interpreter ipt) {
+	constexpr std::string_view utf8_bom = "\xEF\xBB\xBF";
+	if (dbc_src.starts_with(utf8_bom))
+		dbc_src.remove_prefix(utf8_bom.size());
+
 	auto pv = skip_blines(dbc_src);
 	bool expected = true;
 
