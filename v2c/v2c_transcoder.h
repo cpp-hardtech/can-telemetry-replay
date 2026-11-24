@@ -95,10 +95,10 @@ class tr_message;
 
 class tx_group {
 	struct stamped_msg {
-		can_time stamp;
 		canid_t message_id;
 		int64_t message_mux;
-		uint64_t mdata;
+		std::optional<can_time> stamp;
+		uint64_t mdata = 0;
 	};
 
 	std::string _name;
@@ -108,6 +108,7 @@ class tx_group {
 	std::vector<stamped_msg> _msg_clumps;
 
 	friend class tr_message;
+	friend class v2c_transcoder;
 public:
 	tx_group(std::string_view name, uint32_t assemble_freq) :
 		_name(name), _assemble_freq(assemble_freq)
@@ -118,6 +119,7 @@ public:
 	void try_publish(can_time up_to, frame_packet& fp);
 
 private:
+	can_time window_end() const { return _group_origin + _assemble_freq; }
 	void publish(can_time tp, frame_packet& fp);
 	bool all_collected() const;
 	void assign(canid_t message_id, int64_t message_mux);
@@ -177,15 +179,15 @@ private:
 };
 
 class v2c_transcoder {
-	std::chrono::milliseconds _publish_freq;
-	std::chrono::milliseconds _update_freq{ 0 }; // gcd of all tx_groups' freqs
+	std::chrono::milliseconds _publish_freq{ 0 };
 
 	std::unordered_map<canid_t, tr_message> _msgs;
 	std::vector<std::unique_ptr<tx_group>> _tx_groups;
 	vin_assembler _vin;
 
 	frame_packet _frame_packet;
-	can_time _last_update_tp;
+	std::optional<can_time> _packet_origin;
+	can_time _next_update_tp = can_time::max();
 public:
 	frame_packet transcode(can_time stamp, can_frame frame);
 	std::string vin() const { return _vin.value(); }
