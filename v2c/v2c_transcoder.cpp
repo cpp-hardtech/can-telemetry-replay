@@ -78,7 +78,7 @@ void tx_group::publish(can_time tp, frame_packet& fp) {
 		return a.stamp > b.stamp; // secondarily by timestamp, descending
 	});
 
-	int64_t prev_id = 0;
+	std::optional<canid_t> prev_id;
 	for (const auto& smsg : _msg_clumps) {
 		can_frame cf { 0 };
 		cf.can_id = smsg.message_id;
@@ -266,6 +266,15 @@ frame_packet v2c_transcoder::transcode(can_time stamp, can_frame frame) {
 	}
 
 	return rv;
+}
+
+frame_packet v2c_transcoder::drain() {
+	if (_frame_packet.empty())
+		return {};
+
+	auto packet = std::move(_frame_packet);
+	_frame_packet.prepare(packet.utc());
+	return packet;
 }
 
 void v2c_transcoder::setup_timers(can_time first_stamp) {

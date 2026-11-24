@@ -1,5 +1,6 @@
 #include "can/can_codec.h"
 #include "dbc/dbc_parser.h"
+#include "v2c/v2c_transcoder.h"
 
 #include <algorithm>
 #include <array>
@@ -7,8 +8,10 @@
 #include <charconv>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -88,7 +91,7 @@ struct Database {
     }
 };
 
-Database load_database(const char* path) {
+Database load_database(const char* path, can::v2c_transcoder* transcoder) {
     std::ifstream input{path};
     if (!input) {
         throw std::runtime_error(std::string{"cannot open DBC file: "} + path);
@@ -105,6 +108,9 @@ Database load_database(const char* path) {
             throw std::runtime_error("missing DBC multiplexor for " + msg.name);
         }
     }
+    if (transcoder && !can::parse_dbc(contents, std::ref(*transcoder))) {
+        throw std::runtime_error(std::string{"could not load V2C settings from "} + path);
+    }
     return db;
 }
 
@@ -115,7 +121,46 @@ bool parse_number(std::string_view value, T& number, int base) {
     return result.ec == std::errc{} && result.ptr == end;
 }
 
-void replay(const Database& db, const char* path) {
+using Payload = std::array<std::uint8_t, 2 * CAN_MAX_DLEN>;
+
+void print_signals(const Message& msg, std::uint64_t stamp, std::string_view id,
+                   const Payload& data, bool show_common = true) {
+    const auto multiplex_value = msg.multiplexor ? msg.signals[*msg.multiplexor].codec(data.data()) : 0;
+    for (std::size_t index = 0; index < msg.signals.size(); ++index) {
+        const auto& signal = msg.signals[index];
+        if (signal.multiplex_value ? *signal.multiplex_value != multiplex_value
+                                   : !show_common && index != msg.multiplexor) {
+            continue;
+        }
+        const auto raw = signal.codec(data.data());
+        std::cout << stamp << ' ' << id << ' ' << msg.name << '.' << signal.name << '=';
+        if (signal.codec.sign_type() == '-') {
+            std::cout << std::bit_cast<std::int64_t>(raw);
+        } else {
+            std::cout << raw;
+        }
+        std::cout << '\n';
+    }
+}
+
+void print_packet(const Database& db, const can::frame_packet& packet) {
+    if (packet.empty()) {
+        return;
+    }
+    for (auto [stamp, frame] : packet) {
+        const auto& msg = db.messages.at(frame.can_id);
+        const bool extended = (frame.can_id & CAN_EFF_FLAG) != 0;
+        std::ostringstream id;
+        id << std::uppercase << std::hex << std::setfill('0') << std::setw(extended ? 8 : 3)
+           << (frame.can_id & CAN_EFF_MASK);
+        Payload data{};
+        std::ranges::copy(frame.data, data.begin());
+        print_signals(msg, std::chrono::duration_cast<std::chrono::milliseconds>(stamp.time_since_epoch()).count(),
+                      id.str(), data, !msg.multiplexor || can::use_non_muxed(frame));
+    }
+}
+
+void replay(const Database& db, const char* path, can::v2c_transcoder* transcoder) {
     std::ifstream input{path};
     if (!input) {
         throw std::runtime_error(std::string{"cannot open frame log: "} + path);
@@ -159,7 +204,7 @@ void replay(const Database& db, const char* path) {
         }
 
         // The codec reads an eight-byte word beginning at the signal's first byte.
-        std::array<std::uint8_t, 2 * CAN_MAX_DLEN> data{};
+        Payload data{};
         const auto count = bytes.size() / 2;
         for (std::size_t byte = 0; byte < count; ++byte) {
             if (!parse_number(std::string_view{bytes}.substr(byte * 2, 2), data[byte], 16)) {
@@ -168,47 +213,49 @@ void replay(const Database& db, const char* path) {
         }
 
         const auto it = db.messages.find(id);
-        if (it == db.messages.end()) {
-            continue;
+        if (it != db.messages.end() && count != it->second.size) {
+            fail("expected " + std::to_string(it->second.size) + " payload bytes for " + it->second.name);
         }
-        const auto& msg = it->second;
-        if (count != msg.size) {
-            fail("expected " + std::to_string(msg.size) + " payload bytes for " + msg.name);
-        }
-        const auto multiplex_value = msg.multiplexor ? msg.signals[*msg.multiplexor].codec(data.data()) : 0;
-        for (const auto& signal : msg.signals) {
-            if (signal.multiplex_value && *signal.multiplex_value != multiplex_value) {
-                continue;
+        if (transcoder) {
+            using namespace std::chrono;
+            // The packet stores epoch seconds as an unsigned 32-bit field.
+            if (stamp / 1000 > std::numeric_limits<std::uint32_t>::max()) {
+                fail("timestamp is outside the V2C packet range");
             }
-            const auto raw = signal.codec(data.data());
-            std::cout << stamp << ' ' << id_text << ' ' << msg.name << '.' << signal.name << '=';
-            if (signal.codec.sign_type() == '-') {
-                std::cout << std::bit_cast<std::int64_t>(raw);
-            } else {
-                std::cout << raw;
-            }
-            std::cout << '\n';
+            can_frame frame{};
+            frame.can_id = id;
+            frame.len = static_cast<std::uint8_t>(count);
+            std::copy_n(data.begin(), count, frame.data);
+            print_packet(db, transcoder->transcode(can::can_time{milliseconds{stamp}}, frame));
+        } else if (it != db.messages.end()) {
+            print_signals(it->second, stamp, id_text, data);
         }
     }
     if (!input.eof()) {
         fail("could not read frame log");
+    }
+    if (transcoder) {
+        print_packet(db, transcoder->drain());
     }
 }
 
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    constexpr auto usage = "Usage: can-telemetry-replay <database.dbc> <frames.log>\n";
+    constexpr auto usage = "Usage: can-telemetry-replay [--aggregate] <database.dbc> <frames.log>\n";
     if (argc == 2 && std::string_view{argv[1]} == "--help") {
         std::cout << usage;
         return 0;
     }
-    if (argc != 3) {
+    const bool aggregate = argc == 4 && std::string_view{argv[1]} == "--aggregate";
+    if (argc != 3 && !aggregate) {
         std::cerr << usage;
         return 2;
     }
     try {
-        replay(load_database(argv[1]), argv[2]);
+        can::v2c_transcoder transcoder{};
+        auto* aggregator = aggregate ? &transcoder : nullptr;
+        replay(load_database(argv[1 + aggregate], aggregator), argv[2 + aggregate], aggregator);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

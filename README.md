@@ -47,6 +47,30 @@ DBC scaling and offsets. File order is preserved without waiting between frames.
 The log format represents Classic CAN data frames. The DBC reader rejects
 floating-point signals and extended multiplexing in replay mode.
 
+## Aggregate a recorded log
+
+```sh
+./build/can-telemetry-replay --aggregate example/example.dbc example/energy-replay.log
+```
+
+The example DBC groups battery current with state of charge every 500 ms. Its
+first window reports the latest state of charge (`20`) and the average raw values
+for the battery signals.
+
+```text
+500 004 SOC.SOCavg=20
+500 006 BatteryCurrent.RawBattCurrent=20
+500 006 BatteryCurrent.SmoothBattCurrent=30
+500 006 BatteryCurrent.BattVoltage=110
+```
+
+The first recorded timestamp starts the clock, and each group closes its window
+at the period defined in the DBC. A frame exactly at the closing timestamp belongs
+to the next window. Every configured group member must arrive within that window
+for it to appear in the output. Each result carries its window closing timestamp.
+At end of file, the command emits any completed windows still waiting for the
+next `V2CTxTime` publication and stops at the final recorded timestamp.
+
 ## Library components
 
 - [DBC parser](dbc/README.md) dispatches callbacks for DBC messages, signals and attributes.
