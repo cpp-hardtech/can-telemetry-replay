@@ -1,4 +1,3 @@
-#include <numeric>
 #include <unordered_map>
 #include <chrono>
 #include <bit>
@@ -58,11 +57,15 @@ static int32_t millis_diff(can_time tp, uint32_t utc) {
 }
 
 void tx_group::try_publish(can_time up_to, frame_packet& fp) {
-	if (_group_origin + _assemble_freq <= up_to) {
-		if (all_collected())
-			publish(up_to, fp);
-		_group_origin = up_to;
-	}
+	const auto end = window_end();
+	if (_assemble_freq <= std::chrono::milliseconds::zero() || up_to < end)
+		return;
+
+	if (all_collected())
+		publish(end, fp);
+
+	// There were no new samples in the intervening windows.
+	_group_origin += _assemble_freq * ((up_to - _group_origin) / _assemble_freq);
 }
 
 void tx_group::publish(can_time tp, frame_packet& fp) {
@@ -90,13 +93,9 @@ void tx_group::publish(can_time tp, frame_packet& fp) {
 }
 
 bool tx_group::all_collected() const {
-	using namespace std::chrono;
-	for (const auto& smsg : _msg_clumps) {
-		auto d = duration_cast<milliseconds>(smsg.stamp - _group_origin);
-		if (d < milliseconds(0) || d >= _assemble_freq)
-			return false;
-	}
-	return true;
+	return std::ranges::all_of(_msg_clumps, [this](const auto& smsg) {
+		return smsg.stamp && within_interval(*smsg.stamp);
+	});
 }
 
 // used only to assemble messages
@@ -106,7 +105,7 @@ void tx_group::assign(canid_t message_id, int64_t message_mux) {
 }
 
 bool tx_group::within_interval(can_time stamp) const {
-	return stamp >= _group_origin && stamp < _group_origin + _assemble_freq;
+	return stamp >= _group_origin && stamp < window_end();
 }
 
 void tx_group::add_clumped(can_time stamp, canid_t message_id, int64_t message_mux, uint64_t cval, uint8_t len) {
@@ -250,21 +249,19 @@ frame_packet v2c_transcoder::transcode(can_time stamp, can_frame frame) {
 
 	setup_timers(stamp);
 
-	if (_last_update_tp + _update_freq <= stamp) {
-		store_assembled(_last_update_tp + _update_freq);
-		while (_last_update_tp + _update_freq <= stamp)
-			_last_update_tp += _update_freq;
-	}
-
-	can_time frame_begin { seconds(_frame_packet.utc()) };
-	can_time frame_end = frame_begin + _publish_freq;
+	if (_next_update_tp <= stamp)
+		store_assembled(stamp);
 
 	frame_packet rv {};
 
-	if (stamp < frame_begin || stamp >= frame_end) {
+	if (_publish_freq <= 0ms || stamp >= *_packet_origin + _publish_freq) {
 		if (!_frame_packet.empty())
 			rv = std::move(_frame_packet);
-		_frame_packet.prepare(duration_cast<seconds>(stamp.time_since_epoch()).count());
+		if (_publish_freq <= 0ms)
+			_packet_origin = stamp;
+		else
+			*_packet_origin += _publish_freq * ((stamp - *_packet_origin) / _publish_freq);
+		_frame_packet.prepare(duration_cast<seconds>(_packet_origin->time_since_epoch()).count());
 	}
 
 	auto mi = _msgs.find(frame.can_id);
@@ -279,19 +276,32 @@ frame_packet v2c_transcoder::transcode(can_time stamp, can_frame frame) {
 void v2c_transcoder::setup_timers(can_time first_stamp) {
 	using namespace std::chrono;
 
-	if (_last_update_tp != can_time{})
+	if (_packet_origin)
 		return;
 
 	_frame_packet.prepare(duration_cast<seconds>(first_stamp.time_since_epoch()).count());
-	_last_update_tp = first_stamp;
+	_packet_origin = first_stamp;
 
-	for (auto& txg : _tx_groups)
-		txg->time_begin(_last_update_tp);
+	for (auto& txg : _tx_groups) {
+		txg->time_begin(first_stamp);
+		_next_update_tp = std::min(_next_update_tp, txg->window_end());
+	}
 }
 
 void v2c_transcoder::store_assembled(can_time up_to) {
-	for (auto& txg : _tx_groups)
+	std::vector<tx_group*> due;
+	_next_update_tp = can_time::max();
+	for (const auto& txg : _tx_groups) {
+		if (txg->window_end() <= up_to)
+			due.push_back(txg.get());
+		else
+			_next_update_tp = std::min(_next_update_tp, txg->window_end());
+	}
+	std::ranges::stable_sort(due, {}, &tx_group::window_end);
+	for (auto* txg : due) {
 		txg->try_publish(up_to, _frame_packet);
+		_next_update_tp = std::min(_next_update_tp, txg->window_end());
+	}
 }
 
 // helper methods for dbc_parser, to initialize the transcoder structures:
@@ -336,12 +346,8 @@ void v2c_transcoder::set_env_var(const std::string& name, int64_t ev_value) {
 	if (name == "V2CTxTime") {
 		_publish_freq = milliseconds(ev_value);
 	}
-	else if (name.ends_with("GroupTxFreq")) {
+	else if (name.ends_with("GroupTxFreq") && ev_value > 0 && ev_value <= UINT32_MAX) {
 		_tx_groups.emplace_back(new tx_group(name, ev_value));
-
-		auto ufreq = _update_freq / 1ms;
-		ufreq = ufreq ? std::gcd(ufreq, ev_value) : ev_value;
-		_update_freq = milliseconds(ufreq);
 	}
 }
 
