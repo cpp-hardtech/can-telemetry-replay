@@ -47,6 +47,11 @@ DBC scaling and offsets. File order is preserved without waiting between frames.
 The log format represents Classic CAN data frames. The DBC reader rejects
 floating-point signals and extended multiplexing in replay mode.
 
+Pass `--physical` before the DBC path to apply each signal's DBC factor and
+offset and show its unit, such as `BatteryCurrent.BattVoltage=12.3 V`.
+Multiplexor selectors remain raw IDs so they identify the active branch.
+Use the default mode for the exact raw integer values.
+
 ## Library components
 
 - [DBC parser](dbc/README.md) dispatches callbacks for DBC messages, signals and attributes.
