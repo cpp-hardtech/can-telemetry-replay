@@ -121,7 +121,7 @@ bool parse_number(std::string_view value, T& number, int base) {
     return result.ec == std::errc{} && result.ptr == end;
 }
 
-using Payload = std::array<std::uint8_t, 2 * CAN_MAX_DLEN>;
+using Payload = std::array<std::uint8_t, CAN_MAX_DLEN>;
 
 void print_signals(const Message& msg, std::uint64_t stamp, std::string_view id,
                    const Payload& data, bool show_common = true) {
@@ -203,7 +203,6 @@ void replay(const Database& db, const char* path, can::v2c_transcoder* transcode
             fail("expected up to 8 hexadecimal payload bytes");
         }
 
-        // The codec reads an eight-byte word beginning at the signal's first byte.
         Payload data{};
         const auto count = bytes.size() / 2;
         for (std::size_t byte = 0; byte < count; ++byte) {

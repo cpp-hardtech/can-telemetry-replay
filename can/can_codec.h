@@ -1,7 +1,10 @@
 #pragma once
 
-
+#include <algorithm>
+#include <bit>
 #include <boost/endian.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
+#include <cstring>
 #include <variant>
 #include <string>
 
@@ -31,8 +34,10 @@ public:
 	}
 
 	uint64_t operator()(const uint8_t* data) const {
+		uint8_t bytes[8]{};
+		std::memcpy(bytes, data + _byte_pos, std::min(_nbytes, 8u));
 		uint64_t val = _byte_order == order::little ?
-			boost::endian::load_little_u64(data + _byte_pos) : boost::endian::load_big_u64(data + _byte_pos);
+			boost::endian::load_little_u64(bytes) : boost::endian::load_big_u64(bytes);
 
 		if (_nbytes > 8) {
 			uint64_t ninth_byte = data[_byte_pos + 8];
@@ -107,29 +112,52 @@ public:
 template <typename T>
 requires std::is_same_v<T, uint64_t> || std::is_same_v<T, int64_t> || std::is_same_v<T, float> || std::is_same_v<T, double>
 class sig_calc_type {
-	T _value = 0;
+	using integral_sum = std::conditional_t<std::is_signed_v<T>,
+		boost::multiprecision::int128_t, boost::multiprecision::uint128_t>;
+	using calculation_type = std::conditional_t<std::is_integral_v<T>, integral_sum, T>;
+	calculation_type _value;
 public:
-	sig_calc_type(uint64_t raw) {
-		_value = *(const T*)&raw;
-	}
+	sig_calc_type(uint64_t raw) : _value(decode_raw(raw)) {}
 
-	uint64_t get_raw() const { 
-		return *(const uint64_t*)&_value;
+	uint64_t get_raw() const {
+		if constexpr (std::is_same_v<T, float>)
+			return std::bit_cast<uint32_t>(_value);
+		else
+			return std::bit_cast<uint64_t>(static_cast<T>(_value));
 	}
 
 	sig_calc_type<T> operator+(const sig_calc_type<T>& rhs) const {
 		return from_value(_value + rhs._value);
 	}
 
-	sig_calc_type<T> idivround(int64_t d) const {
-		if constexpr (std::is_same_v<T, uint64_t> || std::is_same_v<T, int64_t>)
-			return from_value(T((_value < 0) ? (_value - d / 2) / d : (_value + d / 2) / d));
+	sig_calc_type<T> idivround(uint64_t d) const {
+		if constexpr (std::is_integral_v<T>) {
+			calculation_type quotient = _value / d;
+			const calculation_type remainder = _value % d;
+			const calculation_type threshold = d / 2 + d % 2;
+			if constexpr (std::is_signed_v<T>) {
+				if (remainder <= -threshold)
+					--quotient;
+			}
+			if (remainder >= threshold)
+				++quotient;
+			return from_value(quotient);
+		}
 		else
 			return from_value(_value / d);
 	}
 private:
-	sig_calc_type<T> from_value(T val) const {
-		return sig_calc_type(*(const uint64_t*)&val);
+	static T decode_raw(uint64_t raw) {
+		if constexpr (std::is_same_v<T, float>)
+			return std::bit_cast<T>(static_cast<uint32_t>(raw));
+		else
+			return std::bit_cast<T>(raw);
+	}
+
+	static sig_calc_type<T> from_value(calculation_type value) {
+		sig_calc_type<T> result{0};
+		result._value = value;
+		return result;
 	}
 };
 

@@ -82,7 +82,7 @@ void tx_group::publish(can_time tp, frame_packet& fp) {
 	for (const auto& smsg : _msg_clumps) {
 		can_frame cf { 0 };
 		cf.can_id = smsg.message_id;
-		cf.len = CAN_MAX_DLEN;
+		cf.len = smsg.len;
 		can::use_non_muxed(cf, prev_id != cf.can_id);
 		prev_id = cf.can_id;
 		auto raw_data = smsg.mdata;
@@ -108,10 +108,12 @@ bool tx_group::within_interval(can_time stamp) const {
 	return stamp >= _group_origin && stamp < window_end();
 }
 
-void tx_group::add_clumped(can_time stamp, canid_t message_id, int64_t message_mux, uint64_t cval) {
+void tx_group::add_clumped(can_time stamp, canid_t message_id, int64_t message_mux, uint64_t cval, uint8_t len) {
 	for (auto& smsg : _msg_clumps) {
 		if (smsg.message_id == message_id && smsg.message_mux == message_mux) {
-			smsg.stamp = stamp; smsg.mdata = cval;
+			smsg.stamp = stamp;
+			smsg.mdata = cval;
+			smsg.len = len;
 			break;
 		}
 	}
@@ -145,7 +147,7 @@ std::vector<uint64_t> tr_message::distinct_mux_vals() const {
 
 void tr_message::assign_group(tx_group* txg, uint32_t message_id) {
 	_tx_group = txg;
-	make_sig_assemblers();
+	_sig_asms.reset();
 
 	if (_mux.has_value())
 		for (const auto mux_val : distinct_mux_vals())
@@ -156,6 +158,8 @@ void tr_message::assign_group(tx_group* txg, uint32_t message_id) {
 
 void tr_message::assemble(can_time stamp, can_frame frame) {
 	if (!_tx_group) return;
+	if (!_sig_asms)
+		make_sig_assemblers();
 
 	if (!_tx_group->within_interval(_last_stamp))
 		reset_sig_asms();
@@ -164,18 +168,19 @@ void tr_message::assemble(can_time stamp, can_frame frame) {
 	uint64_t fd = std::bit_cast<uint64_t>(frame.data);
 	int64_t mux_val = _mux.has_value() ? _mux->decode(fd) : -1;
 
-	for (auto& sc : _sig_asms)
+	for (auto& sc : *_sig_asms)
 		clumped_val |= sig_assemble(sc, mux_val, fd);
 
 	if (_mux.has_value())
-		clumped_val |= _mux->encode(fd);
+		clumped_val |= _mux->encode(mux_val);
 
-	_tx_group->add_clumped(stamp, frame.can_id, mux_val, clumped_val);
+	_tx_group->add_clumped(stamp, frame.can_id, mux_val, clumped_val, frame.len);
 
 	_last_stamp = stamp;
 }
 
 void tr_message::make_sig_assemblers() {
+	auto& assemblers = _sig_asms.emplace();
 	for (const tr_signal& sig : _signals) {
 		std::string_view atype = sig.agg_type();
 		sig_asm sasm;
@@ -186,12 +191,12 @@ void tr_message::make_sig_assemblers() {
 			sasm = make_sig_agg<sig_avg>(sig);
 		else continue;
 
-		_sig_asms.emplace_back(std::move(sasm));
+		assemblers.emplace_back(std::move(sasm));
 	}
 }
 
 void tr_message::reset_sig_asms() {
-	for (auto& sc : _sig_asms)
+	for (auto& sc : *_sig_asms)
 		sig_reset(sc);
 }
 
