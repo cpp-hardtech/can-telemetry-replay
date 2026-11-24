@@ -23,6 +23,11 @@ install(TARGETS can-telemetry-replay)
 install(FILES LICENSE NOTICE LICENSES/Linux-CAN.txt DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
 if(BUILD_TESTING)
+  add_executable(dbc-records-test tests/dbc_records.cpp)
+  target_link_libraries(dbc-records-test PRIVATE can_telemetry_core)
+  foreach(scenario scales groups type-reference attributes)
+    add_test(NAME dbc-${scenario} COMMAND dbc-records-test ${scenario})
+  endforeach()
   add_test(NAME offline-replay
     COMMAND "${CMAKE_COMMAND}"
       "-DREPLAY=$<TARGET_FILE:can-telemetry-replay>"
