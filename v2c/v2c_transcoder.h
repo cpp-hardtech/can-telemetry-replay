@@ -191,6 +191,7 @@ class v2c_transcoder {
 	can_time _next_update_tp = can_time::max();
 public:
 	frame_packet transcode(can_time stamp, can_frame frame);
+	frame_packet drain();
 	std::string vin() const { return _vin.value(); }
 
 	void assign_tx_group(const std::string& object_type, unsigned message_id, const std::string& tx_group);

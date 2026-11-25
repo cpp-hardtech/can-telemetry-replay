@@ -273,6 +273,15 @@ frame_packet v2c_transcoder::transcode(can_time stamp, can_frame frame) {
 	return rv;
 }
 
+frame_packet v2c_transcoder::drain() {
+	if (_frame_packet.empty())
+		return {};
+
+	auto packet = std::move(_frame_packet);
+	_frame_packet.prepare(packet.utc());
+	return packet;
+}
+
 void v2c_transcoder::setup_timers(can_time first_stamp) {
 	using namespace std::chrono;
 

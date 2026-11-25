@@ -1,15 +1,19 @@
 #include "can/can_codec.h"
 #include "dbc/dbc_parser.h"
+#include "v2c/v2c_transcoder.h"
 
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -214,7 +218,7 @@ struct Database {
     }
 };
 
-Database load_database(const char* path) {
+Database load_database(const char* path, can::v2c_transcoder* transcoder) {
     std::ifstream input{path};
     if (!input) {
         throw std::runtime_error(std::string{"cannot open DBC file: "} + path);
@@ -223,6 +227,10 @@ Database load_database(const char* path) {
     Database db;
     if (!can::parse_dbc(contents, std::ref(db)) || db.messages.empty()) {
         throw std::runtime_error(std::string{"expected DBC message definitions in "} + path);
+    }
+    if (transcoder && !db.multiplex_rules.empty()) {
+        throw std::runtime_error("extended DBC multiplexing is unsupported in aggregate replay: " +
+                                 db.multiplex_rules.front().signal);
     }
     for (auto& rule : db.multiplex_rules) {
         const auto message = db.messages.find(rule.id);
@@ -233,7 +241,13 @@ Database load_database(const char* path) {
     }
     db.multiplex_rules.clear();
     for (auto& [id, msg] : db.messages) {
+        if (transcoder && std::ranges::count_if(msg.signals, &Signal::is_selector) > 1) {
+            throw std::runtime_error("expected one DBC multiplexor in aggregate replay for " + msg.name);
+        }
         msg.resolve_multiplexing();
+    }
+    if (transcoder && !can::parse_dbc(contents, std::ref(*transcoder))) {
+        throw std::runtime_error(std::string{"could not load V2C settings from "} + path);
     }
     return db;
 }
@@ -293,7 +307,45 @@ void write_csv_string(std::string_view value) {
     std::cout.put('"');
 }
 
-void replay(const Database& db, const char* path, bool physical, bool candump, bool csv) {
+void write_raw_value(const Signal& signal, std::uint64_t raw) {
+    if (signal.codec.sign_type() == '-') {
+        std::cout << std::bit_cast<std::int64_t>(raw);
+    } else {
+        std::cout << raw;
+    }
+}
+
+void print_packet(const Database& db, const can::frame_packet& packet) {
+    if (packet.empty()) {
+        return;
+    }
+    SignalValues values;
+    for (auto [stamp, frame] : packet) {
+        const auto& msg = db.messages.at(frame.can_id);
+        const bool extended = (frame.can_id & CAN_EFF_FLAG) != 0;
+        std::ostringstream id;
+        id << std::uppercase << std::hex << std::setfill('0') << std::setw(extended ? 8 : 3)
+           << (frame.can_id & CAN_EFF_MASK);
+        const auto id_text = id.str();
+        const auto stamp_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(stamp.time_since_epoch()).count();
+        const bool show_common = can::use_non_muxed(frame);
+        msg.decode_signals(frame.data, values);
+        for (std::size_t i = 0; i < msg.signals.size(); ++i) {
+            const auto& signal = msg.signals[i];
+            if (!values[i] ||
+                (!show_common && !signal.is_selector() && signal.conditions.empty())) {
+                continue;
+            }
+            std::cout << stamp_ms << ' ' << id_text << ' ' << msg.name << '.' << signal.name << '=';
+            write_raw_value(signal, *values[i]);
+            std::cout << '\n';
+        }
+    }
+}
+
+void replay(const Database& db, const char* path, bool physical, bool candump, bool csv,
+            can::v2c_transcoder* transcoder) {
     std::ifstream input{path};
     if (!input) {
         throw std::runtime_error(std::string{"cannot open frame log: "} + path);
@@ -318,6 +370,7 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
         std::istringstream row{line};
         std::string stamp_text, interface_name, id_text, bytes, extra;
         Timestamp stamp{};
+        std::uint64_t milliseconds = 0;
         if (candump) {
             std::string frame, trailing;
             if (!(row >> stamp_text >> interface_name >> frame) ||
@@ -333,7 +386,6 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
             id_text = frame.substr(0, separator);
             bytes = frame.substr(separator + 1);
         } else {
-            std::uint64_t milliseconds = 0;
             if (!(row >> stamp_text >> id_text >> bytes) || (row >> extra) ||
                 !parse_number(stamp_text, milliseconds, 10)) {
                 fail("expected milliseconds, a hexadecimal CAN identifier, and a payload");
@@ -371,13 +423,25 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
         }
 
         const auto it = db.messages.find(id);
+        if (it != db.messages.end() && count != it->second.size) {
+            fail("expected " + std::to_string(it->second.size) + " payload bytes for " + it->second.name);
+        }
+        if (transcoder) {
+            // The packet stores epoch seconds as an unsigned 32-bit field.
+            if (milliseconds / 1000 > std::numeric_limits<std::uint32_t>::max()) {
+                fail("timestamp is outside the V2C packet range");
+            }
+            can_frame frame{};
+            frame.can_id = id;
+            frame.len = static_cast<std::uint8_t>(count);
+            std::copy_n(data.begin(), count, frame.data);
+            print_packet(db, transcoder->transcode(can::can_time{std::chrono::milliseconds{milliseconds}}, frame));
+            continue;
+        }
         if (it == db.messages.end()) {
             continue;
         }
         const auto& msg = it->second;
-        if (count != msg.size) {
-            fail("expected " + std::to_string(msg.size) + " payload bytes for " + msg.name);
-        }
         msg.decode_signals(data.data(), values);
         for (std::size_t i = 0; i < msg.signals.size(); ++i) {
             if (!values[i]) {
@@ -412,10 +476,8 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
             }
             if (!value.empty()) {
                 std::cout << value;
-            } else if (is_signed) {
-                std::cout << signed_value;
             } else {
-                std::cout << raw;
+                write_raw_value(signal, raw);
             }
             if (csv) {
                 std::cout.put(',');
@@ -429,13 +491,17 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
     if (!input.eof()) {
         fail("could not read frame log");
     }
+    if (transcoder) {
+        print_packet(db, transcoder->drain());
+    }
 }
 
 }  // namespace
 
 int main(int argc, char* argv[]) {
     constexpr auto usage =
-        "Usage: can-telemetry-replay [--physical] [--candump] [--csv] <database.dbc> <frames.log>\n";
+        "Usage: can-telemetry-replay [--physical] [--candump] [--csv] <database.dbc> <frames.log>\n"
+        "       can-telemetry-replay --aggregate <database.dbc> <frames.log>\n";
     if (argc == 2 && std::string_view{argv[1]} == "--help") {
         std::cout << usage;
         return 0;
@@ -443,6 +509,7 @@ int main(int argc, char* argv[]) {
     bool physical = false;
     bool candump = false;
     bool csv = false;
+    bool aggregate = false;
     int input = 1;
     for (; input < argc; ++input) {
         const std::string_view option{argv[input]};
@@ -452,16 +519,21 @@ int main(int argc, char* argv[]) {
             candump = true;
         } else if (option == "--csv" && !csv) {
             csv = true;
+        } else if (option == "--aggregate" && !aggregate) {
+            aggregate = true;
         } else {
             break;
         }
     }
-    if (argc != input + 2) {
+    if (argc != input + 2 || (aggregate && (physical || candump || csv))) {
         std::cerr << usage;
         return 2;
     }
     try {
-        replay(load_database(argv[input]), argv[input + 1], physical, candump, csv);
+        can::v2c_transcoder transcoder{};
+        auto* aggregator = aggregate ? &transcoder : nullptr;
+        replay(load_database(argv[input], aggregator), argv[input + 1], physical, candump, csv,
+               aggregator);
         if (!std::cout.flush()) {
             throw std::runtime_error("could not write replay output");
         }
