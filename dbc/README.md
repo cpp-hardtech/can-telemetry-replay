@@ -285,7 +285,7 @@ inline void tag_invoke(
 ```
 
 #### DBC example:
-```BO_TX_BU_ 101 "MASTER" "SLAVE";```
+```BO_TX_BU_ 101 : MASTER,SLAVE;```
 
 <details><summary>Parsed as:</summary>
 
@@ -366,7 +366,7 @@ inline void tag_invoke(
 This callback will only be invoked for signal type declarations. See also: [SGTYPE (REF)](#sgtype-ref).
 
 #### DBC example:
-```SGTYPE_ TemperatureType : 16@0+ (0.125,-20) [-50,100] "C" 0.0 TempTable;```
+```SGTYPE_ TemperatureType : 16@0+ (0.125,-20) [-50|100] "C" 0.0, TempTable;```
 
 <details><summary>Parsed as:</summary>
 
@@ -400,7 +400,7 @@ inline void tag_invoke(
 This callback will only be invoked for signals declarations that use a previously defined signal type. See also: [SGTYPE](#sgtype).
 
 #### DBC example:
-```SGTYPE_ 101 TemperatureOuter TemperatureType;```
+```SGTYPE_ 101 TemperatureOuter : TemperatureType;```
 
 <details><summary>Parsed as:</summary>
 
@@ -422,7 +422,7 @@ inline void tag_invoke(
 ```
 
 #### DBC example:
-```SIG_GROUP_ 57 TempGroup2 4 : Temp01, Temp02, Temp03, Temp04;```
+```SIG_GROUP_ 57 TempGroup2 4 : Temp01 Temp02 Temp03 Temp04;```
 
 <details><summary>Parsed as:</summary>
 
@@ -679,7 +679,7 @@ inline void tag_invoke(
 
 ---
 
-```BA_ "EngineType" SG_ 101 "TemperatureOuter" "Gasolene";```
+```BA_ "EngineType" SG_ 101 TemperatureOuter "Gasolene";```
 
 <details><summary>Parsed as:</summary>
 
@@ -694,7 +694,7 @@ inline void tag_invoke(
 
 ---
 
-```BA_ "NodeFrequency" BU_ "MASTER" 30;```
+```BA_ "NodeFrequency" BU_ MASTER 30;```
 
 <details><summary>Parsed as:</summary>
 

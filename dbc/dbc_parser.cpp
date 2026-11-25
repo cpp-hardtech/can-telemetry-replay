@@ -7,7 +7,6 @@
 ===========================================================================================*/
 
 #include <iostream>
-#include <limits>
 #include <type_traits>
 #include <optional>
 
@@ -204,19 +203,22 @@ static const parse_rv parse_sg_(std::string_view rng, const nodes_t& nodes, inte
 		sg_mux_switch_val.reset();
 		sg_mux_switch.reset();
 
-		if (!phrase_parse(iter, rng.end(), sg_, skipper_) || std::abs(sg_factor) <= std::numeric_limits<double>::epsilon())
+		if (!phrase_parse(iter, rng.end(), sg_, skipper_) || sg_factor == 0.0)
 			return make_rv(iter, rng.end(), !has_sect);
 
-		if (sg_mux_switch.value_or(' ') == 'M')
+		if (sg_mux_switch.value_or(' ') == 'M') {
 			def_sg_mux(
 				ipt, can_id, sg_name, sg_start_bit, sg_size, sg_byte_order,
 				sg_sign, std::move(sg_unit), std::move(rec_ords)
 			);
-		else
+			if (sg_mux_switch_val)
+				def_sg_mux_value(ipt, can_id, std::move(sg_name), *sg_mux_switch_val);
+		} else {
 			def_sg(
 				ipt, can_id, sg_mux_switch_val, sg_name, sg_start_bit, sg_size, sg_byte_order,
 				sg_sign, sg_factor, sg_offset, sg_min, sg_max, std::move(sg_unit), std::move(rec_ords)
 			);
+		}
 	}
 	return make_rv(rng.end(), rng.end(), true);
 }
@@ -355,9 +357,10 @@ static const parse_rv parse_sig_group_(std::string_view rng, interpreter& ipt) {
 
 	const auto sig_group_ = x3::omit[x3::lexeme[x3::lit("SIG_GROUP_") >> +x3::blank]] >>
 		x3::attr(true)[to(has_sect)] >> x3::uint_[to(msg_id)] >> name_[to(sig_group_name)] >>
-		x3::uint_[to(repetitions)] >> od(':') >> (name_ % ',')[to(sig_names)] >> od(';') >> end_cmd_;
+		x3::uint_[to(repetitions)] >> od(':') >> -(name_ % -od(','))[to(sig_names)] >> od(';') >> end_cmd_;
 
 	for (auto iter = rng.begin(); iter != rng.end(); has_sect = false) {
+		sig_names.clear();
 		if (!phrase_parse(iter, rng.end(), sig_group_, skipper_))
 			return make_rv(iter, rng.end(), !has_sect);
 
@@ -509,8 +512,12 @@ static const parse_rv parse_ba_(
 	std::string object_name;
 
 	const auto av_glob_ = lazy<attr_val_rule>[to(attr_val)];
+	const auto save_node_name = [&](const auto& ctx) {
+		const auto& name = x3::_attr(ctx);
+		object_name.assign(name.begin(), name.end());
+	};
 	const auto av_bu_ = x3::lexeme[x3::string("BU_")[to(object_type)] >> +x3::blank] >>
-		nodes[to(bu_ord)] >> lazy<attr_val_rule>[to(attr_val)];
+		x3::raw[nodes[to(bu_ord)]][save_node_name] >> lazy<attr_val_rule>[to(attr_val)];
 	const auto av_sg_ = x3::lexeme[x3::string("SG_")[to(object_type)] >> +x3::blank] >>
 		x3::uint_[to(message_id)] >> name_[to(object_name)] >> lazy<attr_val_rule>[to(attr_val)];
 	const auto av_bo_ = x3::lexeme[x3::string("BO_")[to(object_type)] >> +x3::blank] >>
@@ -526,6 +533,9 @@ static const parse_rv parse_ba_(
 
 	for (auto iter = rng.begin(); iter != rng.end(); has_sect = false) {
 		object_type.clear();
+		object_name.clear();
+		bu_ord = 0;
+		message_id = 0;
 
 		if (!phrase_parse(iter, rng.end(), ba_, skipper_))
 			return make_rv(iter, rng.end(), !has_sect);
@@ -664,6 +674,10 @@ static bool syntax_error(std::string_view where, std::string_view what = "") {
 }
 
 bool parse_dbc(std::string_view dbc_src, interpreter ipt) {
+	constexpr std::string_view utf8_bom = "\xEF\xBB\xBF";
+	if (dbc_src.starts_with(utf8_bom))
+		dbc_src.remove_prefix(utf8_bom.size());
+
 	auto pv = skip_blines(dbc_src);
 	bool expected = true;
 
@@ -722,6 +736,13 @@ bool parse_dbc(std::string_view dbc_src, interpreter ipt) {
 		return syntax_error(pv);
 
 	if (std::tie(pv, expected) = parse_val_(pv, ipt); !expected)
+		return syntax_error(pv);
+
+	// Signal type references and groups may follow value descriptions.
+	if (std::tie(pv, expected) = parse_sgtype_(pv, val_tables, ipt); !expected)
+		return syntax_error(pv);
+
+	if (std::tie(pv, expected) = parse_sig_group_(pv, ipt); !expected)
 		return syntax_error(pv);
 
 	if (std::tie(pv, expected) = parse_sig_valtype_(pv, ipt); !expected)
