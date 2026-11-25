@@ -59,6 +59,12 @@ distinguished. Both microsecond and nanosecond timestamps are supported.
 Combine `--candump` and `--physical` to display engineering values from a
 capture.
 
+Use `--csv` for downstream analysis. Each row includes the timestamp, its unit
+(`ms` for the three-column input or `s` for `--candump`), interface, hexadecimal
+identifier, message name, signal name, value, and engineering unit when applied.
+Raw signed and unsigned values are written as integers. The interface column is
+empty for the three-column input.
+
 ## Library components
 
 - [DBC parser](dbc/README.md) dispatches callbacks for DBC messages, signals and attributes.

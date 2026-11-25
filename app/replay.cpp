@@ -164,10 +164,24 @@ std::string physical_value(double raw, const EngineeringScale& scaling) {
     return std::string{text.data(), result.ptr};
 }
 
-void replay(const Database& db, const char* path, bool physical, bool candump) {
+void write_csv_string(std::string_view value) {
+    std::cout.put('"');
+    for (const char character : value) {
+        if (character == '"') {
+            std::cout.put('"');
+        }
+        std::cout.put(character);
+    }
+    std::cout.put('"');
+}
+
+void replay(const Database& db, const char* path, bool physical, bool candump, bool csv) {
     std::ifstream input{path};
     if (!input) {
         throw std::runtime_error(std::string{"cannot open frame log: "} + path);
+    }
+    if (csv) {
+        std::cout << "timestamp,timestamp_unit,interface,can_id,message,signal,value,unit\n";
     }
 
     std::size_t line_number = 0;
@@ -253,29 +267,41 @@ void replay(const Database& db, const char* path, bool physical, bool candump) {
             const auto raw = signal.codec(data.data());
             const auto signed_value = std::bit_cast<std::int64_t>(raw);
             const bool is_signed = signal.codec.sign_type() == '-';
-            const auto prefix = [&] {
+            std::string value;
+            std::string_view unit;
+            if (physical && signal.scaling) {
+                value = physical_value(
+                    is_signed ? static_cast<double>(signed_value) : static_cast<double>(raw),
+                    *signal.scaling);
+                unit = signal.scaling->unit;
+            }
+            if (csv) {
+                const std::array<std::string_view, 6> fields{
+                    stamp_text, candump ? "s" : "ms", interface_name, id_text, msg.name,
+                    signal.name};
+                for (const auto field : fields) {
+                    write_csv_string(field);
+                    std::cout.put(',');
+                }
+            } else {
                 std::cout << stamp_text;
                 if (candump) {
                     std::cout << ' ' << interface_name;
                 }
                 std::cout << ' ' << id_text << ' ' << msg.name << '.' << signal.name << '=';
-            };
-            if (physical && signal.scaling) {
-                const auto value = physical_value(
-                    is_signed ? static_cast<double>(signed_value) : static_cast<double>(raw),
-                    *signal.scaling);
-                prefix();
+            }
+            if (!value.empty()) {
                 std::cout << value;
-                if (!signal.scaling->unit.empty()) {
-                    std::cout << ' ' << signal.scaling->unit;
-                }
+            } else if (is_signed) {
+                std::cout << signed_value;
             } else {
-                prefix();
-                if (is_signed) {
-                    std::cout << signed_value;
-                } else {
-                    std::cout << raw;
-                }
+                std::cout << raw;
+            }
+            if (csv) {
+                std::cout.put(',');
+                write_csv_string(unit);
+            } else if (!unit.empty()) {
+                std::cout << ' ' << unit;
             }
             std::cout << '\n';
         }
@@ -289,13 +315,14 @@ void replay(const Database& db, const char* path, bool physical, bool candump) {
 
 int main(int argc, char* argv[]) {
     constexpr auto usage =
-        "Usage: can-telemetry-replay [--physical] [--candump] <database.dbc> <frames.log>\n";
+        "Usage: can-telemetry-replay [--physical] [--candump] [--csv] <database.dbc> <frames.log>\n";
     if (argc == 2 && std::string_view{argv[1]} == "--help") {
         std::cout << usage;
         return 0;
     }
     bool physical = false;
     bool candump = false;
+    bool csv = false;
     int input = 1;
     for (; input < argc; ++input) {
         const std::string_view option{argv[input]};
@@ -303,6 +330,8 @@ int main(int argc, char* argv[]) {
             physical = true;
         } else if (option == "--candump" && !candump) {
             candump = true;
+        } else if (option == "--csv" && !csv) {
+            csv = true;
         } else {
             break;
         }
@@ -312,7 +341,7 @@ int main(int argc, char* argv[]) {
         return 2;
     }
     try {
-        replay(load_database(argv[input]), argv[input + 1], physical, candump);
+        replay(load_database(argv[input]), argv[input + 1], physical, candump, csv);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
