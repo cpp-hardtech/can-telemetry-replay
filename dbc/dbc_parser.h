@@ -58,6 +58,10 @@ using def_sg_mux_cpo = cpo<
 >;
 inline constexpr def_sg_mux_cpo def_sg_mux;
 
+// Follows def_sg_mux for selectors with an inline m<number>M marker.
+using def_sg_mux_value_cpo = cpo<"sg_mux_value", uint32_t, std::string, unsigned>;
+inline constexpr def_sg_mux_value_cpo def_sg_mux_value;
+
 using def_ev_cpo = cpo<
 	"ev", std::string, unsigned, double, double,
 	std::string, double, unsigned, std::string, std::vector<size_t>
@@ -161,6 +165,7 @@ using interpreter = can::erasure::any<
 	def_ba,
 	def_sg,
 	def_sg_mux,
+	def_sg_mux_value,
 	def_val_env,
 	def_val_sg,
 	def_val_table,
