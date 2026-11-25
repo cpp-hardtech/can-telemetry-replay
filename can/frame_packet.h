@@ -92,12 +92,14 @@ class frame_iterator_sentinel{};
 class frame_iterator {
 	const frame_packet& _frame_packet;
 	uint32_t _packet_utc = 0;
-	const uint8_t* _msg_iter;
+	const uint8_t* _msg_iter = nullptr;
 
 public:
 	frame_iterator(const frame_packet& fp) : _frame_packet(fp) {
-		_packet_utc = fp.utc();
-		_msg_iter = fp.data_begin() + 6;
+		if (!fp.empty()) {
+			_packet_utc = fp.utc();
+			_msg_iter = fp.data_begin() + 6;
+		}
 	}
 
 	~frame_iterator() {}

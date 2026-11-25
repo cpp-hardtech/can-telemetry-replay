@@ -49,4 +49,8 @@ if(BUILD_TESTING)
     COMMAND "${CMAKE_COMMAND}"
       "-DREPLAY=$<TARGET_FILE:can-telemetry-replay>"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/extended-multiplex.cmake")
+
+  add_executable(can_frame_packet_test tests/frame_packet.cpp)
+  target_link_libraries(can_frame_packet_test PRIVATE can_telemetry_core)
+  add_test(NAME frame-packet COMMAND can_frame_packet_test)
 endif()
