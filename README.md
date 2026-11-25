@@ -52,6 +52,13 @@ offset and show its unit, such as `BatteryCurrent.BattVoltage=12.3 V`.
 Multiplexor selectors remain raw IDs so they identify the active branch.
 Use the default mode for the exact raw integer values.
 
+Pass `--candump` to replay a compact Classic CAN capture, such as a file
+written by `candump -L`. The output starts with the capture timestamp in
+seconds and the interface name, so records from different interfaces can be
+distinguished. Both microsecond and nanosecond timestamps are supported.
+Combine `--candump` and `--physical` to display engineering values from a
+capture.
+
 ## Library components
 
 - [DBC parser](dbc/README.md) dispatches callbacks for DBC messages, signals and attributes.

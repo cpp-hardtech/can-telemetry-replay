@@ -48,3 +48,18 @@ set(expected "0 003 GPSAltitude.GPSAltitude=-2 M\n5 006 BatteryCurrent.RawBattCu
 if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUAL "")
   message(FATAL_ERROR "Physical replay exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
 endif()
+
+set(candump_log "${CMAKE_CURRENT_BINARY_DIR}/candump.log")
+file(WRITE "${candump_log}"
+  "(0.000001) vcan0 003#FE3F R\n(0.000001001) vcan0 003#0500\n(0.000002) vcan1 007#0080\n")
+execute_process(
+  COMMAND "${REPLAY}" --candump "${EXAMPLES}/example.dbc" "${candump_log}"
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE output
+  ERROR_VARIABLE errors
+  TIMEOUT 3
+)
+set(expected "0.000001 vcan0 003 GPSAltitude.GPSAltitude=-2\n0.000001001 vcan0 003 GPSAltitude.GPSAltitude=5\n0.000002 vcan1 007 PowerState.PowerState=2\n")
+if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUAL "")
+  message(FATAL_ERROR "Candump replay exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
+endif()
