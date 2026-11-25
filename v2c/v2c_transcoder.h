@@ -40,11 +40,11 @@ class tr_signal {
 	sig_codec _codec;
 
 	std::string _agg_type = "LAST";
-	val_type_t _val_type = i64;
+	val_type_t _val_type;
 	std::optional<int64_t> _mux_val; 
 public:
 	tr_signal(std::string name, sig_codec codec, std::optional<int64_t> mux_val)
-		: _name(std::move(name)), _codec(codec), _mux_val(mux_val)
+		: _name(std::move(name)), _codec(codec), _val_type(codec.sign_type() == '+' ? u64 : i64), _mux_val(mux_val)
 	{}
 
 	const std::string& name() const { return _name; }
@@ -95,10 +95,11 @@ class tr_message;
 
 class tx_group {
 	struct stamped_msg {
-		can_time stamp;
 		canid_t message_id;
 		int64_t message_mux;
-		uint64_t mdata;
+		std::optional<can_time> stamp;
+		uint64_t mdata = 0;
+		uint8_t len = 0;
 	};
 
 	std::string _name;
@@ -108,6 +109,7 @@ class tx_group {
 	std::vector<stamped_msg> _msg_clumps;
 
 	friend class tr_message;
+	friend class v2c_transcoder;
 public:
 	tx_group(std::string_view name, uint32_t assemble_freq) :
 		_name(name), _assemble_freq(assemble_freq)
@@ -118,18 +120,19 @@ public:
 	void try_publish(can_time up_to, frame_packet& fp);
 
 private:
+	can_time window_end() const { return _group_origin + _assemble_freq; }
 	void publish(can_time tp, frame_packet& fp);
 	bool all_collected() const;
 	void assign(canid_t message_id, int64_t message_mux);
 	bool within_interval(can_time stamp) const;
-	void add_clumped(can_time stamp, canid_t message_id, int64_t message_mux, uint64_t cval);
+	void add_clumped(can_time stamp, canid_t message_id, int64_t message_mux, uint64_t cval, uint8_t len);
 };
 
 class tr_message {
 	std::vector<tr_signal> _signals;
 	std::optional<tr_muxer> _mux;
 
-	std::vector<sig_asm> _sig_asms;
+	std::optional<std::vector<sig_asm>> _sig_asms;
 	tx_group* _tx_group = nullptr;
 	can_time _last_stamp;
 
@@ -177,15 +180,15 @@ private:
 };
 
 class v2c_transcoder {
-	std::chrono::milliseconds _publish_freq;
-	std::chrono::milliseconds _update_freq{ 0 }; // gcd of all tx_groups' freqs
+	std::chrono::milliseconds _publish_freq{ 0 };
 
 	std::unordered_map<canid_t, tr_message> _msgs;
 	std::vector<std::unique_ptr<tx_group>> _tx_groups;
 	vin_assembler _vin;
 
 	frame_packet _frame_packet;
-	can_time _last_update_tp;
+	std::optional<can_time> _packet_origin;
+	can_time _next_update_tp = can_time::max();
 public:
 	frame_packet transcode(can_time stamp, can_frame frame);
 	std::string vin() const { return _vin.value(); }

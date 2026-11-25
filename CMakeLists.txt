@@ -23,11 +23,32 @@ install(TARGETS can-telemetry-replay)
 install(FILES LICENSE NOTICE LICENSES/Linux-CAN.txt DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
 if(BUILD_TESTING)
+  add_executable(dbc-records-test tests/dbc_records.cpp)
+  target_link_libraries(dbc-records-test PRIVATE can_telemetry_core)
+  foreach(scenario scales groups type-reference attributes)
+    add_test(NAME dbc-${scenario} COMMAND dbc-records-test ${scenario})
+  endforeach()
+
+  add_executable(v2c-aggregation-test tests/v2c_aggregation.cpp)
+  target_link_libraries(v2c-aggregation-test PRIVATE can_telemetry_core)
+  add_test(NAME v2c-aggregation COMMAND v2c-aggregation-test)
+
+  add_executable(v2c-clock-test tests/v2c_clock.cpp)
+  target_link_libraries(v2c-clock-test PRIVATE can_telemetry_core)
+  add_test(NAME v2c-clock COMMAND v2c-clock-test)
+  add_test(NAME v2c-no-group COMMAND v2c-clock-test no-group)
+  add_test(NAME v2c-zero-group COMMAND v2c-clock-test zero-group)
+  set_tests_properties(v2c-clock v2c-no-group v2c-zero-group PROPERTIES TIMEOUT 3)
+
   add_test(NAME offline-replay
     COMMAND "${CMAKE_COMMAND}"
       "-DREPLAY=$<TARGET_FILE:can-telemetry-replay>"
       "-DEXAMPLES=${CMAKE_CURRENT_SOURCE_DIR}/example"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/replay.cmake")
+  add_test(NAME extended-multiplex-replay
+    COMMAND "${CMAKE_COMMAND}"
+      "-DREPLAY=$<TARGET_FILE:can-telemetry-replay>"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/extended-multiplex.cmake")
 
   add_executable(can_frame_packet_test tests/frame_packet.cpp)
   target_link_libraries(can_frame_packet_test PRIVATE can_telemetry_core)

@@ -1,0 +1,22 @@
+VERSION "0.1"
+
+NS_ :
+    SG_MUL_VAL_
+
+BS_:
+
+BU_: Sender Receiver
+
+BO_ 2147483939 Status: 5 Sender
+ SG_ Mode M : 0|8@1+ (10,0) [0|255] "" Receiver
+ SG_ Detail m2M : 8|8@1+ (10,0) [0|255] "" Receiver
+ SG_ Flags m1 : 23|12@0+ (1,0) [0|4095] "" Receiver
+ SG_ Offset m2 : 16|8@1- (0.5,1) [-128|127] "A" Receiver
+ SG_ Temperature m4 : 24|8@1- (0.5,-10) [-74|53.5] "C" Receiver
+ SG_ Runtime : 32|8@1+ (1,0) [0|255] "" Receiver
+
+SG_MUL_VAL_ 2147483939 Detail Mode 2-3;
+SG_MUL_VAL_ 2147483939 Flags Mode 1-1, 5-6;
+SG_MUL_VAL_ 2147483939 Offset Detail 4-6, 8-8;
+SG_MUL_VAL_ 2147483939 Temperature Detail 4-6;
+SG_MUL_VAL_ 2147483939 Temperature Mode 3-3;
