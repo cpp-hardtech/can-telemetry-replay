@@ -69,13 +69,15 @@ void tx_group::try_publish(can_time up_to, frame_packet& fp) {
 }
 
 void tx_group::publish(can_time tp, frame_packet& fp) {
-	// for messages with muxed signals, non-muxed signal values should be taken 
-	// from the frame with the latest timestamp, indicated by can::use_non_muxed(cf, true)
+	// Use the latest frame for common signals of a multiplexed message,
+	// with receive order breaking timestamp ties.
 
 	std::sort(_msg_clumps.begin(), _msg_clumps.end(), [](const auto& a, const auto& b) {
 		if (a.message_id != b.message_id) // primarily by message_ids
 			return a.message_id < b.message_id;
-		return a.stamp > b.stamp; // secondarily by timestamp, descending
+		if (a.stamp != b.stamp)
+			return a.stamp > b.stamp;
+		return a.receive_order > b.receive_order;
 	});
 
 	std::optional<canid_t> prev_id;
@@ -112,6 +114,7 @@ void tx_group::add_clumped(can_time stamp, canid_t message_id, int64_t message_m
 	for (auto& smsg : _msg_clumps) {
 		if (smsg.message_id == message_id && smsg.message_mux == message_mux) {
 			smsg.stamp = stamp;
+			smsg.receive_order = _next_receive_order++;
 			smsg.mdata = cval;
 			smsg.len = len;
 			break;
