@@ -44,7 +44,8 @@ Frames with unknown identifiers are skipped. A known frame must have the payload
 length in its DBC definition. The tool supports signed and unsigned integer signals
 in either byte order. Values are printed before DBC scaling and offsets. File order
 is preserved without waiting between frames. The log format represents Classic CAN
-data frames with integer DBC signals.
+data frames with integer DBC signals. DBC files may start with a UTF-8 byte
+order mark (BOM).
 
 Multiplexed signals appear when their selectors are active and match their DBC
 conditions. `SG_MUL_VAL_` lists inclusive ranges, including disjoint ranges for
