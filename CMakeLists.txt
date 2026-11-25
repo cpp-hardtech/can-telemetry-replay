@@ -23,6 +23,12 @@ install(TARGETS can-telemetry-replay)
 install(FILES LICENSE NOTICE LICENSES/Linux-CAN.txt DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 
 if(BUILD_TESTING)
+  add_executable(dbc-records-test tests/dbc_records.cpp)
+  target_link_libraries(dbc-records-test PRIVATE can_telemetry_core)
+  foreach(scenario scales groups type-reference attributes)
+    add_test(NAME dbc-${scenario} COMMAND dbc-records-test ${scenario})
+  endforeach()
+
   add_executable(v2c-aggregation-test tests/v2c_aggregation.cpp)
   target_link_libraries(v2c-aggregation-test PRIVATE can_telemetry_core)
   add_test(NAME v2c-aggregation COMMAND v2c-aggregation-test)
