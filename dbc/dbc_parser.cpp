@@ -206,16 +206,19 @@ static const parse_rv parse_sg_(std::string_view rng, const nodes_t& nodes, inte
 		if (!phrase_parse(iter, rng.end(), sg_, skipper_) || sg_factor == 0.0)
 			return make_rv(iter, rng.end(), !has_sect);
 
-		if (sg_mux_switch.value_or(' ') == 'M')
+		if (sg_mux_switch.value_or(' ') == 'M') {
 			def_sg_mux(
 				ipt, can_id, sg_name, sg_start_bit, sg_size, sg_byte_order,
 				sg_sign, std::move(sg_unit), std::move(rec_ords)
 			);
-		else
+			if (sg_mux_switch_val)
+				def_sg_mux_value(ipt, can_id, std::move(sg_name), *sg_mux_switch_val);
+		} else {
 			def_sg(
 				ipt, can_id, sg_mux_switch_val, sg_name, sg_start_bit, sg_size, sg_byte_order,
 				sg_sign, sg_factor, sg_offset, sg_min, sg_max, std::move(sg_unit), std::move(rec_ords)
 			);
+		}
 	}
 	return make_rv(rng.end(), rng.end(), true);
 }

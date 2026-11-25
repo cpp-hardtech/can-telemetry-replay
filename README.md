@@ -42,10 +42,43 @@ with two digits, or use `-` for an empty frame. Blank lines and lines starting w
 
 Frames with unknown identifiers are skipped. A known frame must have the payload
 length in its DBC definition. The tool supports signed and unsigned integer signals
-in either byte order and a single multiplexor per message. Values are printed before
-DBC scaling and offsets. File order is preserved without waiting between frames.
-The log format represents Classic CAN data frames. The DBC reader rejects
-floating-point signals and extended multiplexing in replay mode.
+in either byte order. Values are printed before DBC scaling and offsets. File order
+is preserved without waiting between frames. The log format represents Classic CAN
+data frames with integer DBC signals.
+
+Multiplexed signals appear when their selectors are active and match their DBC
+conditions. `SG_MUL_VAL_` lists inclusive ranges, including disjoint ranges for
+one selector. Nested selectors and signals with several selector conditions are
+printed only when all their conditions match. `SG_MUL_VAL_` supplies the selector
+conditions for a signal when present. A signal with only an inline marker such as
+`m1` uses the message's single root selector.
+
+Pass `--physical` before the DBC path to apply each signal's DBC factor and
+offset and show its unit, such as `BatteryCurrent.BattVoltage=12.3 V`.
+Multiplexor selectors remain raw IDs so they identify the active branch.
+Use the default mode for the exact raw integer values.
+
+The extended multiplexing sample shows how nested selectors gate decoded signals.
+
+```sh
+./build/can-telemetry-replay --physical tests/extended-multiplex.dbc tests/extended-multiplex.log
+```
+
+When `Mode` is `3` and `Detail` is `6`, the sample reports `Offset=-7 A` and
+`Temperature=1 C`. With `Mode=2` and `Detail=4`, only `Offset` is active.
+
+Pass `--candump` to replay a compact Classic CAN capture, such as a file
+written by `candump -L`. The output starts with the capture timestamp in
+seconds and the interface name, so records from different interfaces can be
+distinguished. Both microsecond and nanosecond timestamps are supported.
+Combine `--candump` and `--physical` to display engineering values from a
+capture.
+
+Use `--csv` for downstream analysis. Each row includes the timestamp, its unit
+(`ms` for the three-column input or `s` for `--candump`), interface, hexadecimal
+identifier, message name, signal name, value, and engineering unit when applied.
+Raw signed and unsigned values are written as integers. The interface column is
+empty for the three-column input.
 
 ## Library components
 
