@@ -342,6 +342,9 @@ int main(int argc, char* argv[]) {
     }
     try {
         replay(load_database(argv[input]), argv[input + 1], physical, candump, csv);
+        if (!std::cout.flush()) {
+            throw std::runtime_error("could not write replay output");
+        }
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
