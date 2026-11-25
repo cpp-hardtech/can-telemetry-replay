@@ -23,18 +23,124 @@ struct EngineeringScale {
     std::string unit;
 };
 
+using SelectorRanges = std::vector<std::pair<unsigned, unsigned>>;
+using SignalValues = std::vector<std::optional<std::uint64_t>>;
+
+struct SelectorCondition {
+    std::size_t selector;
+    SelectorRanges ranges;
+
+    bool matches(const SignalValues& values) const {
+        const auto& value = values[selector];
+        return value && std::ranges::any_of(ranges, [&](const auto& range) {
+            return range.first <= *value && *value <= range.second;
+        });
+    }
+};
+
 struct Signal {
     std::string name;
     can::sig_codec codec;
-    std::optional<unsigned> multiplex_value;
+    std::optional<unsigned> inline_mux_value;
     std::optional<EngineeringScale> scaling;
+    std::vector<SelectorCondition> conditions;
+
+    bool is_selector() const { return !scaling; }
 };
 
 struct Message {
     std::string name;
     std::size_t size;
     std::vector<Signal> signals;
-    std::optional<std::size_t> multiplexor;
+    std::vector<std::size_t> decode_order;
+
+    std::size_t signal_index(const std::string& signal_name) const {
+        const auto it = std::ranges::find(signals, signal_name, &Signal::name);
+        if (it == signals.end()) {
+            throw std::runtime_error("unknown DBC signal " + name + "." + signal_name);
+        }
+        return it - signals.begin();
+    }
+
+    void add_ranges(const std::string& signal_name, const std::string& selector_name,
+                    SelectorRanges ranges) {
+        auto& signal = signals[signal_index(signal_name)];
+        const auto selector = signal_index(selector_name);
+        if (!signals[selector].is_selector()) {
+            throw std::runtime_error("expected DBC multiplexor for " + name + "." + signal_name);
+        }
+        if (std::ranges::any_of(ranges, [](const auto& range) { return range.first > range.second; })) {
+            throw std::runtime_error("reversed DBC multiplex range for " + name + "." + signal_name);
+        }
+        const auto condition = std::ranges::find(signal.conditions, selector, &SelectorCondition::selector);
+        if (condition == signal.conditions.end()) {
+            signal.conditions.push_back({selector, std::move(ranges)});
+        } else {
+            condition->ranges.insert(condition->ranges.end(), ranges.begin(), ranges.end());
+        }
+    }
+
+    void resolve_multiplexing() {
+        std::optional<std::size_t> root;
+        bool multiple_roots = false;
+        for (std::size_t i = 0; i < signals.size(); ++i) {
+            const auto& signal = signals[i];
+            if (!signal.is_selector()) {
+                continue;
+            }
+            if (signal.codec.sign_type() != '+') {
+                throw std::runtime_error("expected unsigned DBC multiplexor for " + name + "." + signal.name);
+            }
+            if (!signal.inline_mux_value && signal.conditions.empty()) {
+                multiple_roots = root.has_value();
+                root = i;
+            }
+        }
+        for (auto& signal : signals) {
+            if (signal.inline_mux_value && signal.conditions.empty()) {
+                if (!root || multiple_roots) {
+                    throw std::runtime_error("expected one root DBC multiplexor for " + name + "." + signal.name);
+                }
+                const auto value = *signal.inline_mux_value;
+                signal.conditions.push_back({*root, {{value, value}}});
+            }
+        }
+
+        // Resolve selectors before their dependents, independently of DBC signal order.
+        std::vector<std::vector<std::size_t>> dependents(signals.size());
+        std::vector<std::size_t> dependencies(signals.size());
+        for (std::size_t i = 0; i < signals.size(); ++i) {
+            dependencies[i] = signals[i].conditions.size();
+            if (dependencies[i] == 0) {
+                decode_order.push_back(i);
+            }
+            for (const auto& condition : signals[i].conditions) {
+                dependents[condition.selector].push_back(i);
+            }
+        }
+        for (std::size_t next = 0; next < decode_order.size(); ++next) {
+            for (const auto dependent : dependents[decode_order[next]]) {
+                if (--dependencies[dependent] == 0) {
+                    decode_order.push_back(dependent);
+                }
+            }
+        }
+        if (decode_order.size() != signals.size()) {
+            throw std::runtime_error("cyclic DBC multiplexors for " + name);
+        }
+    }
+
+    void decode_signals(const std::uint8_t* data, SignalValues& values) const {
+        values.assign(signals.size(), std::nullopt);
+        for (const auto index : decode_order) {
+            const auto& signal = signals[index];
+            if (std::ranges::all_of(signal.conditions, [&](const auto& condition) {
+                    return condition.matches(values);
+                })) {
+                values[index] = signal.codec(data);
+            }
+        }
+    }
 };
 
 bool valid_identifier(std::uint32_t id) {
@@ -43,6 +149,14 @@ bool valid_identifier(std::uint32_t id) {
 
 struct Database {
     std::unordered_map<std::uint32_t, Message> messages;
+
+    struct MultiplexRule {
+        std::uint32_t id;
+        std::string signal;
+        std::string selector;
+        SelectorRanges ranges;
+    };
+    std::vector<MultiplexRule> multiplex_rules;
 
     friend void tag_invoke(can::def_bo_cpo, Database& db, std::uint32_t id,
                            std::string name, std::size_t size, std::size_t) {
@@ -65,7 +179,7 @@ struct Database {
             throw std::runtime_error("signal lies outside the payload of " + msg.name + "." + name);
         }
         msg.signals.push_back({std::move(name), can::sig_codec{start, bits, order, sign},
-                               value, std::move(scaling)});
+                               value, std::move(scaling), {}});
     }
 
     friend void tag_invoke(can::def_sg_cpo, Database& db, std::uint32_t id,
@@ -79,12 +193,12 @@ struct Database {
     friend void tag_invoke(can::def_sg_mux_cpo, Database& db, std::uint32_t id,
                            std::string name, unsigned start, unsigned bits, char order,
                            char sign, std::string, std::vector<std::size_t>) {
-        auto& msg = db.messages.at(id);
-        if (msg.multiplexor || sign != '+') {
-            throw std::runtime_error("expected one unsigned multiplexor for " + msg.name);
-        }
-        msg.multiplexor = msg.signals.size();
         db.add_signal(id, std::move(name), start, bits, order, sign, {}, {});
+    }
+
+    friend void tag_invoke(can::def_sg_mux_value_cpo, Database& db, std::uint32_t id,
+                           std::string, unsigned value) {
+        db.messages.at(id).signals.back().inline_mux_value = value;
     }
 
     friend void tag_invoke(can::def_sig_valtype_cpo, Database&, unsigned, std::string name,
@@ -94,9 +208,9 @@ struct Database {
         }
     }
 
-    friend void tag_invoke(can::def_sg_mul_val_cpo, Database&, unsigned, std::string name,
-                           std::string, std::vector<std::pair<unsigned, unsigned>>) {
-        throw std::runtime_error("extended DBC multiplexing is unsupported: " + name);
+    friend void tag_invoke(can::def_sg_mul_val_cpo, Database& db, unsigned id, std::string name,
+                           std::string selector, SelectorRanges ranges) {
+        db.multiplex_rules.push_back({id, std::move(name), std::move(selector), std::move(ranges)});
     }
 };
 
@@ -110,12 +224,16 @@ Database load_database(const char* path) {
     if (!can::parse_dbc(contents, std::ref(db)) || db.messages.empty()) {
         throw std::runtime_error(std::string{"expected DBC message definitions in "} + path);
     }
-    for (const auto& [id, msg] : db.messages) {
-        if (!msg.multiplexor && std::ranges::any_of(msg.signals, [](const Signal& signal) {
-                return signal.multiplex_value.has_value();
-            })) {
-            throw std::runtime_error("missing DBC multiplexor for " + msg.name);
+    for (auto& rule : db.multiplex_rules) {
+        const auto message = db.messages.find(rule.id);
+        if (message == db.messages.end()) {
+            throw std::runtime_error("unknown DBC message in multiplex rule for " + rule.signal);
         }
+        message->second.add_ranges(rule.signal, rule.selector, std::move(rule.ranges));
+    }
+    db.multiplex_rules.clear();
+    for (auto& [id, msg] : db.messages) {
+        msg.resolve_multiplexing();
     }
     return db;
 }
@@ -186,6 +304,7 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
 
     std::size_t line_number = 0;
     Timestamp last_stamp{};
+    SignalValues values;
     auto fail = [&](const std::string& reason) {
         throw std::runtime_error(std::string{path} + ":" + std::to_string(line_number) + ": " + reason);
     };
@@ -259,12 +378,13 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
         if (count != msg.size) {
             fail("expected " + std::to_string(msg.size) + " payload bytes for " + msg.name);
         }
-        const auto multiplex_value = msg.multiplexor ? msg.signals[*msg.multiplexor].codec(data.data()) : 0;
-        for (const auto& signal : msg.signals) {
-            if (signal.multiplex_value && *signal.multiplex_value != multiplex_value) {
+        msg.decode_signals(data.data(), values);
+        for (std::size_t i = 0; i < msg.signals.size(); ++i) {
+            if (!values[i]) {
                 continue;
             }
-            const auto raw = signal.codec(data.data());
+            const auto& signal = msg.signals[i];
+            const auto raw = *values[i];
             const auto signed_value = std::bit_cast<std::int64_t>(raw);
             const bool is_signed = signal.codec.sign_type() == '-';
             std::string value;
