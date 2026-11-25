@@ -5,6 +5,7 @@
 #include <array>
 #include <bit>
 #include <charconv>
+#include <cmath>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -15,10 +16,17 @@
 
 namespace {
 
+struct EngineeringScale {
+    double factor;
+    double offset;
+    std::string unit;
+};
+
 struct Signal {
     std::string name;
     can::sig_codec codec;
     std::optional<unsigned> multiplex_value;
+    std::optional<EngineeringScale> scaling;
 };
 
 struct Message {
@@ -46,7 +54,8 @@ struct Database {
     }
 
     void add_signal(std::uint32_t id, std::string name, unsigned start, unsigned bits,
-                    char order, char sign, std::optional<unsigned> value) {
+                    char order, char sign, std::optional<unsigned> value,
+                    std::optional<EngineeringScale> scaling) {
         auto& msg = messages.at(id);
         const unsigned first_byte = start / 8;
         const unsigned offset = order == '1' ? start % 8 : 7 - start % 8;
@@ -54,14 +63,16 @@ struct Database {
             (bits + offset + 7) / 8 > msg.size - first_byte) {
             throw std::runtime_error("signal lies outside the payload of " + msg.name + "." + name);
         }
-        msg.signals.push_back({std::move(name), can::sig_codec{start, bits, order, sign}, value});
+        msg.signals.push_back({std::move(name), can::sig_codec{start, bits, order, sign},
+                               value, std::move(scaling)});
     }
 
     friend void tag_invoke(can::def_sg_cpo, Database& db, std::uint32_t id,
                            std::optional<unsigned> value, std::string name, unsigned start,
-                           unsigned bits, char order, char sign, double, double, double,
-                           double, std::string, std::vector<std::size_t>) {
-        db.add_signal(id, std::move(name), start, bits, order, sign, value);
+                           unsigned bits, char order, char sign, double factor, double offset,
+                           double, double, std::string unit, std::vector<std::size_t>) {
+        db.add_signal(id, std::move(name), start, bits, order, sign, value,
+                      EngineeringScale{factor, offset, std::move(unit)});
     }
 
     friend void tag_invoke(can::def_sg_mux_cpo, Database& db, std::uint32_t id,
@@ -72,7 +83,7 @@ struct Database {
             throw std::runtime_error("expected one unsigned multiplexor for " + msg.name);
         }
         msg.multiplexor = msg.signals.size();
-        db.add_signal(id, std::move(name), start, bits, order, sign, {});
+        db.add_signal(id, std::move(name), start, bits, order, sign, {}, {});
     }
 
     friend void tag_invoke(can::def_sig_valtype_cpo, Database&, unsigned, std::string name,
@@ -115,7 +126,20 @@ bool parse_number(std::string_view value, T& number, int base) {
     return result.ec == std::errc{} && result.ptr == end;
 }
 
-void replay(const Database& db, const char* path) {
+std::string physical_value(double raw, const EngineeringScale& scaling) {
+    const double value = std::fma(raw, scaling.factor, scaling.offset);
+    if (!std::isfinite(value)) {
+        throw std::runtime_error("DBC scaling produced a non-finite value");
+    }
+    std::array<char, 64> text;
+    const auto result = std::to_chars(text.data(), text.data() + text.size(), value);
+    if (result.ec != std::errc{}) {
+        throw std::runtime_error("could not format a physical signal value");
+    }
+    return std::string{text.data(), result.ptr};
+}
+
+void replay(const Database& db, const char* path, bool physical) {
     std::ifstream input{path};
     if (!input) {
         throw std::runtime_error(std::string{"cannot open frame log: "} + path);
@@ -180,11 +204,24 @@ void replay(const Database& db, const char* path) {
                 continue;
             }
             const auto raw = signal.codec(data.data());
-            std::cout << stamp << ' ' << id_text << ' ' << msg.name << '.' << signal.name << '=';
-            if (signal.codec.sign_type() == '-') {
-                std::cout << std::bit_cast<std::int64_t>(raw);
+            const auto signed_value = std::bit_cast<std::int64_t>(raw);
+            const bool is_signed = signal.codec.sign_type() == '-';
+            if (physical && signal.scaling) {
+                const auto value = physical_value(
+                    is_signed ? static_cast<double>(signed_value) : static_cast<double>(raw),
+                    *signal.scaling);
+                std::cout << stamp << ' ' << id_text << ' ' << msg.name << '.' << signal.name
+                          << '=' << value;
+                if (!signal.scaling->unit.empty()) {
+                    std::cout << ' ' << signal.scaling->unit;
+                }
             } else {
-                std::cout << raw;
+                std::cout << stamp << ' ' << id_text << ' ' << msg.name << '.' << signal.name << '=';
+                if (is_signed) {
+                    std::cout << signed_value;
+                } else {
+                    std::cout << raw;
+                }
             }
             std::cout << '\n';
         }
@@ -197,17 +234,19 @@ void replay(const Database& db, const char* path) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-    constexpr auto usage = "Usage: can-telemetry-replay <database.dbc> <frames.log>\n";
+    constexpr auto usage = "Usage: can-telemetry-replay [--physical] <database.dbc> <frames.log>\n";
     if (argc == 2 && std::string_view{argv[1]} == "--help") {
         std::cout << usage;
         return 0;
     }
-    if (argc != 3) {
+    const bool physical = argc > 1 && std::string_view{argv[1]} == "--physical";
+    const int input = physical ? 2 : 1;
+    if (argc != input + 2) {
         std::cerr << usage;
         return 2;
     }
     try {
-        replay(load_database(argv[1]), argv[2]);
+        replay(load_database(argv[input]), argv[input + 1], physical);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

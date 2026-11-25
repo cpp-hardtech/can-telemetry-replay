@@ -34,3 +34,17 @@ execute_process(
 if(NOT result STREQUAL "1" OR NOT output STREQUAL "" OR NOT errors MATCHES "short-frame[.]log:1: expected 2 payload bytes")
   message(FATAL_ERROR "Short frame exit=${result}\nStdout:\n${output}\nStderr:\n${errors}")
 endif()
+
+set(physical_log "${CMAKE_CURRENT_BINARY_DIR}/physical-values.log")
+file(WRITE "${physical_log}" "0 003 FE3F\n5 006 7B00F4FF28000000\n5 007 0080\n")
+execute_process(
+  COMMAND "${REPLAY}" --physical "${EXAMPLES}/example.dbc" "${physical_log}"
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE output
+  ERROR_VARIABLE errors
+  TIMEOUT 3
+)
+set(expected "0 003 GPSAltitude.GPSAltitude=-2 M\n5 006 BatteryCurrent.RawBattCurrent=-798 A\n5 006 BatteryCurrent.SmoothBattCurrent=6 A\n5 006 BatteryCurrent.BattVoltage=12.3 V\n5 007 PowerState.PowerState=2\n")
+if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUAL "")
+  message(FATAL_ERROR "Physical replay exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
+endif()
