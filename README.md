@@ -109,6 +109,9 @@ Aggregate replay uses the three-column log and prints raw integer values.
 It supports a single, non-nested multiplexor per message. Use `--aggregate`
 on its own.
 
+For a multiplexed message, the latest frame carries the common signals.
+When timestamps tie, the later input record supplies those values.
+
 ## Library components
 
 - [DBC parser](dbc/README.md) dispatches callbacks for DBC messages, signals and attributes.
