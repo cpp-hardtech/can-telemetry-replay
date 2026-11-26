@@ -81,6 +81,15 @@ identifier, message name, signal name, value, and engineering unit when applied.
 Raw signed and unsigned values are written as integers. The interface column is
 empty for the three-column input.
 
+## Read a log from standard input
+
+Pass `-` as the log path to read from standard input. This lets you decompress
+a candump capture while exporting it to CSV.
+
+```sh
+gzip -dc capture.log.gz | ./build/can-telemetry-replay --candump --csv example/example.dbc -
+```
+
 ## Aggregate a recorded log
 
 ```sh

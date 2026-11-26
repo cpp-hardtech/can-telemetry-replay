@@ -11,6 +11,18 @@ if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUA
   message(FATAL_ERROR "Replay exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
 endif()
 
+execute_process(
+  COMMAND "${REPLAY}" "${EXAMPLES}/example.dbc" -
+  INPUT_FILE "${EXAMPLES}/replay.log"
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE output
+  ERROR_VARIABLE errors
+  TIMEOUT 3
+)
+if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUAL "")
+  message(FATAL_ERROR "Replay from stdin exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
+endif()
+
 string(ASCII 239 187 191 utf8_bom)
 file(READ "${EXAMPLES}/example.dbc" dbc_contents)
 set(bom_database "${CMAKE_CURRENT_BINARY_DIR}/utf8-with-bom.dbc")
@@ -48,6 +60,20 @@ execute_process(
 )
 if(NOT result STREQUAL "1" OR NOT output STREQUAL "" OR NOT errors MATCHES "short-frame[.]log:1: expected 2 payload bytes")
   message(FATAL_ERROR "Short frame exit=${result}\nStdout:\n${output}\nStderr:\n${errors}")
+endif()
+
+set(stdin_short_log "${CMAKE_CURRENT_BINARY_DIR}/stdin-short-frame.log")
+file(WRITE "${stdin_short_log}" "# Recorded frame follows\n0 003 FE")
+execute_process(
+  COMMAND "${REPLAY}" "${EXAMPLES}/example.dbc" -
+  INPUT_FILE "${stdin_short_log}"
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE output
+  ERROR_VARIABLE errors
+  TIMEOUT 3
+)
+if(NOT result STREQUAL "1" OR NOT output STREQUAL "" OR NOT errors MATCHES "stdin:2: expected 2 payload bytes")
+  message(FATAL_ERROR "Short frame from stdin exit=${result}\nStdout:\n${output}\nStderr:\n${errors}")
 endif()
 
 set(physical_log "${CMAKE_CURRENT_BINARY_DIR}/physical-values.log")
@@ -118,6 +144,18 @@ execute_process(
 set(expected "${csv_header}\"1.234567\",\"s\",\"vcan0\",\"101\",\"Counter\",\"Ticks\",5,\"m,s\"\n")
 if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUAL "")
   message(FATAL_ERROR "Physical CSV replay exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
+endif()
+
+execute_process(
+  COMMAND "${REPLAY}" --csv --candump --physical "${csv_dbc}" -
+  INPUT_FILE "${csv_log}"
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE output
+  ERROR_VARIABLE errors
+  TIMEOUT 3
+)
+if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUAL "")
+  message(FATAL_ERROR "Physical CSV replay from stdin exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
 endif()
 
 if(EXISTS "/dev/full")
