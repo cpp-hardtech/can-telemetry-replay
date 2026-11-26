@@ -17,6 +17,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -29,6 +30,7 @@ struct EngineeringScale {
 
 using SelectorRanges = std::vector<std::pair<unsigned, unsigned>>;
 using SignalValues = std::vector<std::optional<std::uint64_t>>;
+using IdentifierFilter = std::unordered_set<std::uint32_t>;
 
 struct SelectorCondition {
     std::size_t selector;
@@ -259,6 +261,18 @@ bool parse_number(std::string_view value, T& number, int base) {
     return result.ec == std::errc{} && result.ptr == end;
 }
 
+bool parse_identifier(std::string_view text, std::uint32_t& id) {
+    const bool extended = text.size() == 8;
+    if ((text.size() != 3 && !extended) || !parse_number(text, id, 16) ||
+        id > (extended ? CAN_EFF_MASK : CAN_SFF_MASK)) {
+        return false;
+    }
+    if (extended) {
+        id |= CAN_EFF_FLAG;
+    }
+    return true;
+}
+
 using Timestamp = std::pair<std::uint64_t, std::uint32_t>;
 
 bool parse_candump_timestamp(std::string_view text, Timestamp& stamp) {
@@ -315,12 +329,16 @@ void write_raw_value(const Signal& signal, std::uint64_t raw) {
     }
 }
 
-void print_packet(const Database& db, const can::frame_packet& packet) {
+void print_packet(const Database& db, const can::frame_packet& packet,
+                  const IdentifierFilter& identifiers) {
     if (packet.empty()) {
         return;
     }
     SignalValues values;
     for (auto [stamp, frame] : packet) {
+        if (!identifiers.empty() && !identifiers.contains(frame.can_id)) {
+            continue;
+        }
         const auto& msg = db.messages.at(frame.can_id);
         const bool extended = (frame.can_id & CAN_EFF_FLAG) != 0;
         std::ostringstream id;
@@ -345,7 +363,7 @@ void print_packet(const Database& db, const can::frame_packet& packet) {
 }
 
 void replay(const Database& db, const char* path, bool physical, bool candump, bool csv,
-            can::v2c_transcoder* transcoder) {
+            can::v2c_transcoder* transcoder, const IdentifierFilter& identifiers) {
     const bool from_stdin = std::string_view{path} == "-";
     std::ifstream file;
     if (!from_stdin) {
@@ -401,18 +419,13 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
             stamp_text = std::to_string(milliseconds);
         }
         std::uint32_t id = 0;
-        if ((id_text.size() != 3 && id_text.size() != 8) ||
-            !parse_number(id_text, id, 16) ||
-            id > (id_text.size() == 3 ? CAN_SFF_MASK : CAN_EFF_MASK)) {
+        if (!parse_identifier(id_text, id)) {
             fail("expected a 3- or 8-digit hexadecimal CAN identifier");
         }
         if (stamp < last_stamp) {
             fail("timestamps must be nondecreasing");
         }
         last_stamp = stamp;
-        if (id_text.size() == 8) {
-            id |= CAN_EFF_FLAG;
-        }
         if (!candump && bytes == "-") {
             bytes.clear();
         }
@@ -441,10 +454,12 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
             frame.can_id = id;
             frame.len = static_cast<std::uint8_t>(count);
             std::copy_n(data.begin(), count, frame.data);
-            print_packet(db, transcoder->transcode(can::can_time{std::chrono::milliseconds{milliseconds}}, frame));
+            const auto packet = transcoder->transcode(
+                can::can_time{std::chrono::milliseconds{milliseconds}}, frame);
+            print_packet(db, packet, identifiers);
             continue;
         }
-        if (it == db.messages.end()) {
+        if (it == db.messages.end() || (!identifiers.empty() && !identifiers.contains(id))) {
             continue;
         }
         const auto& msg = it->second;
@@ -498,7 +513,7 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
         fail("could not read frame log");
     }
     if (transcoder) {
-        print_packet(db, transcoder->drain());
+        print_packet(db, transcoder->drain(), identifiers);
     }
 }
 
@@ -506,8 +521,10 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
 
 int main(int argc, char* argv[]) {
     constexpr auto usage =
-        "Usage: can-telemetry-replay [--physical] [--candump] [--csv] <database.dbc> <frames.log>\n"
-        "       can-telemetry-replay --aggregate <database.dbc> <frames.log>\n"
+        "Usage: can-telemetry-replay [--physical] [--candump] [--csv] [--id HEX]... "
+        "<database.dbc> <frames.log>\n"
+        "       can-telemetry-replay --aggregate [--id HEX]... <database.dbc> <frames.log>\n"
+        "Use three hex digits for a standard ID and eight for an extended ID.\n"
         "Pass - as <frames.log> to read from standard input.\n";
     if (argc == 2 && std::string_view{argv[1]} == "--help") {
         std::cout << usage;
@@ -517,6 +534,7 @@ int main(int argc, char* argv[]) {
     bool candump = false;
     bool csv = false;
     bool aggregate = false;
+    IdentifierFilter identifiers;
     int input = 1;
     for (; input < argc; ++input) {
         const std::string_view option{argv[input]};
@@ -528,6 +546,17 @@ int main(int argc, char* argv[]) {
             csv = true;
         } else if (option == "--aggregate" && !aggregate) {
             aggregate = true;
+        } else if (option == "--id") {
+            if (++input == argc) {
+                std::cerr << usage;
+                return 2;
+            }
+            std::uint32_t id = 0;
+            if (!parse_identifier(argv[input], id)) {
+                std::cerr << "invalid CAN identifier for --id: " << argv[input] << '\n';
+                return 2;
+            }
+            identifiers.insert(id);
         } else {
             break;
         }
@@ -540,7 +569,7 @@ int main(int argc, char* argv[]) {
         can::v2c_transcoder transcoder{};
         auto* aggregator = aggregate ? &transcoder : nullptr;
         replay(load_database(argv[input], aggregator), argv[input + 1], physical, candump, csv,
-               aggregator);
+               aggregator, identifiers);
         if (!std::cout.flush()) {
             throw std::runtime_error("could not write replay output");
         }

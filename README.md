@@ -59,6 +59,13 @@ offset and show its unit, such as `BatteryCurrent.BattVoltage=12.3 V`.
 Multiplexor selectors remain raw IDs so they identify the active branch.
 Use the default mode for the exact raw integer values.
 
+Use `--id HEX` to show selected CAN identifiers in text, CSV, or aggregate
+output. The argument uses the same width as the frame log. For example,
+`--id 123` selects the standard identifier and `--id 00000123` selects the
+extended identifier. Repeat `--id` to show any of the specified identifiers.
+The tool checks frame syntax, timestamps, and known payload lengths throughout
+the input log.
+
 The extended multiplexing sample shows how nested selectors gate decoded signals.
 
 ```sh
@@ -115,8 +122,8 @@ At end of file, the command emits any completed windows still waiting for the
 next `V2CTxTime` publication and stops at the final recorded timestamp.
 
 Aggregate replay uses the three-column log and prints raw integer values.
-It supports a single, non-nested multiplexor per message. Use `--aggregate`
-on its own.
+It supports a single, non-nested multiplexor per message. A filter supplied
+with `--id` selects results after the aggregation windows have been assembled.
 
 For a multiplexed message, the latest frame carries the common signals.
 When timestamps tie, the later input record supplies those values.
