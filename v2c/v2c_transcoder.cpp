@@ -1,6 +1,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <bit>
+#include <charconv>
 
 #include "can/can_codec.h"
 #include "v2c_transcoder.h"
@@ -69,13 +70,15 @@ void tx_group::try_publish(can_time up_to, frame_packet& fp) {
 }
 
 void tx_group::publish(can_time tp, frame_packet& fp) {
-	// for messages with muxed signals, non-muxed signal values should be taken 
-	// from the frame with the latest timestamp, indicated by can::use_non_muxed(cf, true)
+	// Use the latest frame for common signals of a multiplexed message,
+	// with receive order breaking timestamp ties.
 
 	std::sort(_msg_clumps.begin(), _msg_clumps.end(), [](const auto& a, const auto& b) {
 		if (a.message_id != b.message_id) // primarily by message_ids
 			return a.message_id < b.message_id;
-		return a.stamp > b.stamp; // secondarily by timestamp, descending
+		if (a.stamp != b.stamp)
+			return a.stamp > b.stamp;
+		return a.receive_order > b.receive_order;
 	});
 
 	std::optional<canid_t> prev_id;
@@ -112,6 +115,7 @@ void tx_group::add_clumped(can_time stamp, canid_t message_id, int64_t message_m
 	for (auto& smsg : _msg_clumps) {
 		if (smsg.message_id == message_id && smsg.message_mux == message_mux) {
 			smsg.stamp = stamp;
+			smsg.receive_order = _next_receive_order++;
 			smsg.mdata = cval;
 			smsg.len = len;
 			break;
@@ -224,7 +228,7 @@ void tr_message::add_muxer(tr_muxer mux) {
 }
 
 bool vin_assembler::decode_some(const can::tr_message& msg, can_frame frame) {
-	if (frame.can_id != _vin_msg_id)
+	if (!_vin_msg_id || frame.can_id != *_vin_msg_id)
 		return false;
 	auto old_bits = _cbits;
 	uint64_t fd = std::bit_cast<uint64_t>(frame.data);
@@ -238,10 +242,16 @@ bool vin_assembler::decode_some(const can::tr_message& msg, can_frame frame) {
 }
 
 int vin_assembler::vin_char(std::string_view sig_name) {
-	if (sig_name.find_first_of("VIN") != 0) return 0;
-	auto rb = sig_name.rbegin();
-	while (rb != sig_name.rend() && std::isdigit(*rb)) ++rb;
-	return std::stoi(sig_name.data() + std::distance(rb, sig_name.rend()));
+	if (!sig_name.starts_with("VIN"))
+		return 0;
+
+	const auto digits = sig_name.substr(sig_name.find_last_not_of("0123456789") + 1);
+	const auto* end = digits.data() + digits.size();
+	unsigned position = 0;
+	const auto parsed = std::from_chars(digits.data(), end, position);
+	if (parsed.ec != std::errc{} || parsed.ptr != end || position > vin_len)
+		return 0;
+	return static_cast<int>(position);
 }
 
 frame_packet v2c_transcoder::transcode(can_time stamp, can_frame frame) {

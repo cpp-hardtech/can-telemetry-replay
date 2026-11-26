@@ -98,6 +98,7 @@ class tx_group {
 		canid_t message_id;
 		int64_t message_mux;
 		std::optional<can_time> stamp;
+		uint64_t receive_order = 0;
 		uint64_t mdata = 0;
 		uint8_t len = 0;
 	};
@@ -105,6 +106,7 @@ class tx_group {
 	std::string _name;
 	std::chrono::milliseconds _assemble_freq;
 	can_time _group_origin;
+	uint64_t _next_receive_order = 0;
 
 	std::vector<stamped_msg> _msg_clumps;
 
@@ -160,7 +162,7 @@ private:
 
 class vin_assembler {
 	static constexpr size_t vin_len = 17; // industry standard
-	uint32_t _vin_msg_id;
+	std::optional<uint32_t> _vin_msg_id;
 	uint32_t _cbits = 0;
 	char _vin[vin_len];
 public:

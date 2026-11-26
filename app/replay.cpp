@@ -364,10 +364,16 @@ void print_packet(const Database& db, const can::frame_packet& packet,
 
 void replay(const Database& db, const char* path, bool physical, bool candump, bool csv,
             can::v2c_transcoder* transcoder, const IdentifierFilter& identifiers) {
-    std::ifstream input{path};
-    if (!input) {
-        throw std::runtime_error(std::string{"cannot open frame log: "} + path);
+    const bool from_stdin = std::string_view{path} == "-";
+    std::ifstream file;
+    if (!from_stdin) {
+        file.open(path);
+        if (!file) {
+            throw std::runtime_error(std::string{"cannot open frame log: "} + path);
+        }
     }
+    std::istream& input = from_stdin ? std::cin : file;
+    const char* source = from_stdin ? "stdin" : path;
     if (csv) {
         std::cout << "timestamp,timestamp_unit,interface,can_id,message,signal,value,unit\n";
     }
@@ -376,7 +382,7 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
     Timestamp last_stamp{};
     SignalValues values;
     auto fail = [&](const std::string& reason) {
-        throw std::runtime_error(std::string{path} + ":" + std::to_string(line_number) + ": " + reason);
+        throw std::runtime_error(std::string{source} + ":" + std::to_string(line_number) + ": " + reason);
     };
 
     for (std::string line; std::getline(input, line);) {
@@ -503,7 +509,7 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
             std::cout << '\n';
         }
     }
-    if (!input.eof()) {
+    if (input.bad() || !input.eof()) {
         fail("could not read frame log");
     }
     if (transcoder) {
@@ -518,7 +524,8 @@ int main(int argc, char* argv[]) {
         "Usage: can-telemetry-replay [--physical] [--candump] [--csv] [--id HEX]... "
         "<database.dbc> <frames.log>\n"
         "       can-telemetry-replay --aggregate [--id HEX]... <database.dbc> <frames.log>\n"
-        "Use three hex digits for a standard ID and eight for an extended ID.\n";
+        "Use three hex digits for a standard ID and eight for an extended ID.\n"
+        "Pass - as <frames.log> to read from standard input.\n";
     if (argc == 2 && std::string_view{argv[1]} == "--help") {
         std::cout << usage;
         return 0;
