@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <chrono>
+#include <exception>
 #include <iostream>
 #include <limits>
 
@@ -130,6 +131,39 @@ bool float_raw_conversion() {
 	return actual == raw;
 }
 
+bool ignores_id_zero_without_vin() {
+	std::cout << "unconfigured VIN assembly must ignore VehicleSpeed on CAN ID 0\n";
+	vin_assembler assembler{};
+	tr_message message;
+	add_signal(message, "VehicleSpeed", 0, 8, '+');
+	try {
+		return !assembler.decode_some(message, input(0, 1, 42)) && assembler.empty();
+	} catch (const std::exception& error) {
+		std::cerr << "Unexpected VIN decode of VehicleSpeed: " << error.what() << '\n';
+		return false;
+	}
+}
+
+bool accepts_vin_character_with_other_fields() {
+	std::cout << "VIN on CAN ID 0 must accept VIN_1 and ignore Index and VINChecksum\n";
+	vin_assembler assembler{};
+	assembler.vin_message_id(0);
+	tr_message message;
+	add_signal(message, "Index", 8, 8, '+');
+	add_signal(message, "VINChecksum", 16, 8, '+');
+	const auto frame = input(0, 3, 0xa00541);
+	try {
+		const bool metadata_ignored = !assembler.decode_some(message, frame);
+		add_signal(message, "VIN_1", 0, 8, '+');
+		const bool character_added = assembler.decode_some(message, frame);
+		const bool repeated = assembler.decode_some(message, frame);
+		return metadata_ignored && character_added && !repeated && assembler.empty();
+	} catch (const std::exception& error) {
+		std::cerr << "Unexpected VIN decode error: " << error.what() << '\n';
+		return false;
+	}
+}
+
 } // namespace
 
 int main() {
@@ -145,5 +179,8 @@ int main() {
 		0x4000000000000000ull);
 	const bool last_byte = last_byte_signal();
 	const bool float_raw = float_raw_conversion();
-	return mux && zero && length && attributes && unsigned_type && wide_sum && round && last_byte && float_raw ? 0 : 1;
+	const bool no_vin = ignores_id_zero_without_vin();
+	const bool vin_fields = accepts_vin_character_with_other_fields();
+	return mux && zero && length && attributes && unsigned_type && wide_sum && round && last_byte && float_raw &&
+	       no_vin && vin_fields ? 0 : 1;
 }

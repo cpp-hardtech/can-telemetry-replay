@@ -162,7 +162,7 @@ private:
 
 class vin_assembler {
 	static constexpr size_t vin_len = 17; // industry standard
-	uint32_t _vin_msg_id;
+	std::optional<uint32_t> _vin_msg_id;
 	uint32_t _cbits = 0;
 	char _vin[vin_len];
 public:
