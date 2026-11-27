@@ -140,5 +140,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Distributed under the three-clause BSD terms in [LICENSE](LICENSE). Additional
-notices and source attribution are documented in [NOTICE](NOTICE).
+Distributed under the three-clause BSD terms in [LICENSE](LICENSE).
