@@ -79,6 +79,8 @@ Pass `--candump` to replay a compact Classic CAN capture, such as a file
 written by `candump -L`. The output starts with the capture timestamp in
 seconds and the interface name, so records from different interfaces can be
 distinguished. Both microsecond and nanosecond timestamps are supported.
+Frames are replayed in capture file order even if their timestamps decrease,
+which can happen in captures taken across multiple interfaces.
 Combine `--candump` and `--physical` to display engineering values from a
 capture.
 

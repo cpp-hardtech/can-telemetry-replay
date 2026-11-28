@@ -273,9 +273,7 @@ bool parse_identifier(std::string_view text, std::uint32_t& id) {
     return true;
 }
 
-using Timestamp = std::pair<std::uint64_t, std::uint32_t>;
-
-bool parse_candump_timestamp(std::string_view text, Timestamp& stamp) {
+bool is_valid_candump_timestamp(std::string_view text) {
     if (text.size() < 4 || text.front() != '(' || text.back() != ')') {
         return false;
     }
@@ -286,15 +284,11 @@ bool parse_candump_timestamp(std::string_view text, Timestamp& stamp) {
         return false;
     }
     const auto fraction = text.substr(point + 1);
-    if ((fraction.size() != 6 && fraction.size() != 9) ||
-        !parse_number(text.substr(0, point), stamp.first, 10) ||
-        !parse_number(fraction, stamp.second, 10)) {
-        return false;
-    }
-    if (fraction.size() == 6) {
-        stamp.second *= 1000;
-    }
-    return true;
+    std::uint64_t seconds{};
+    std::uint32_t subseconds{};
+    return (fraction.size() == 6 || fraction.size() == 9) &&
+           parse_number(text.substr(0, point), seconds, 10) &&
+           parse_number(fraction, subseconds, 10);
 }
 
 std::string physical_value(double raw, const EngineeringScale& scaling) {
@@ -379,7 +373,7 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
     }
 
     std::size_t line_number = 0;
-    Timestamp last_stamp{};
+    std::uint64_t last_milliseconds = 0;
     SignalValues values;
     auto fail = [&](const std::string& reason) {
         throw std::runtime_error(std::string{source} + ":" + std::to_string(line_number) + ": " + reason);
@@ -393,13 +387,12 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
         }
         std::istringstream row{line};
         std::string stamp_text, interface_name, id_text, bytes, extra;
-        Timestamp stamp{};
         std::uint64_t milliseconds = 0;
         if (candump) {
             std::string frame, trailing;
             if (!(row >> stamp_text >> interface_name >> frame) ||
                 ((row >> extra) && ((extra != "R" && extra != "T") || (row >> trailing))) ||
-                !parse_candump_timestamp(stamp_text, stamp)) {
+                !is_valid_candump_timestamp(stamp_text)) {
                 fail("expected a candump timestamp, interface name, and data frame");
             }
             stamp_text = stamp_text.substr(1, stamp_text.size() - 2);
@@ -414,20 +407,20 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
                 !parse_number(stamp_text, milliseconds, 10)) {
                 fail("expected milliseconds, a hexadecimal CAN identifier, and a payload");
             }
-            stamp = {milliseconds / 1000,
-                     static_cast<std::uint32_t>((milliseconds % 1000) * 1000000)};
             stamp_text = std::to_string(milliseconds);
         }
         std::uint32_t id = 0;
         if (!parse_identifier(id_text, id)) {
             fail("expected a 3- or 8-digit hexadecimal CAN identifier");
         }
-        if (stamp < last_stamp) {
-            fail("timestamps must be nondecreasing");
-        }
-        last_stamp = stamp;
-        if (!candump && bytes == "-") {
-            bytes.clear();
+        if (!candump) {
+            if (milliseconds < last_milliseconds) {
+                fail("timestamps must be nondecreasing");
+            }
+            last_milliseconds = milliseconds;
+            if (bytes == "-") {
+                bytes.clear();
+            }
         }
         if (bytes.size() % 2 || bytes.size() > 2 * CAN_MAX_DLEN) {
             fail("expected up to 8 hexadecimal payload bytes");
