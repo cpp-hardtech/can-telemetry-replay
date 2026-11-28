@@ -66,6 +66,11 @@ extended identifier. Repeat `--id` to show any of the specified identifiers.
 The tool checks frame syntax, timestamps, and known payload lengths throughout
 the input log.
 
+With `--candump`, use `--interface IFACE` to select an exact recorded
+interface name. Repeat the option to include several interfaces. In text and
+CSV output, a record must match both the interface selection and any `--id`
+selection. All input frames still pass through the normal validation.
+
 The extended multiplexing sample shows how nested selectors gate decoded signals.
 
 ```sh

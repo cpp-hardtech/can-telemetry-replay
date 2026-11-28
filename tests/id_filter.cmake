@@ -44,11 +44,35 @@ expect_replay("Repeated IDs in recorded order" 0 "${first_standard}${extended}${
   --id 00000123 --id 123 --id 123 "${dbc}" "${log}")
 
 set(candump_log "${CMAKE_CURRENT_BINARY_DIR}/id-filter-candump.log")
-file(WRITE "${candump_log}" "(2.000000) can0 123#05\n(2.000001) can1 00000123#07\n")
+file(WRITE "${candump_log}"
+  "(2.000000) can0 123#05\n(2.000001) can1 00000123#07\n(2.000001) can1 123#09\n(2.000002) can2 123#0B\n")
 set(csv_header "timestamp,timestamp_unit,interface,can_id,message,signal,value,unit\n")
 expect_replay("Candump ID filter with physical CSV output" 0
   "${csv_header}\"2.000001\",\"s\",\"can1\",\"00000123\",\"ExtendedReading\",\"Value\",4.5,\"V\"\n" "^$"
   --candump --id 00000123 --physical --csv "${dbc}" "${candump_log}")
+expect_replay("One candump interface" 0
+  "2.000001 can1 00000123 ExtendedReading.Value=7\n2.000001 can1 123 StandardReading.Value=9\n" "^$"
+  --interface can1 --candump "${dbc}" "${candump_log}")
+expect_replay("Repeated interfaces intersect CAN ID selection in recorded order" 0
+  "2.000000 can0 123 StandardReading.Value=5\n2.000001 can1 123 StandardReading.Value=9\n" "^$"
+  --candump --interface can1 --interface can0 --interface can1 --id 123 "${dbc}" "${candump_log}")
+expect_replay("Candump interface and ID filters with physical CSV output" 0
+  "${csv_header}\"2.000001\",\"s\",\"can1\",\"123\",\"StandardReading\",\"Value\",18,\"V\"\n" "^$"
+  --candump --interface can1 --id 123 --physical --csv "${dbc}" "${candump_log}")
+expect_replay("CSV without matching interfaces" 0 "${csv_header}" "^$"
+  --candump --interface can9 --csv "${dbc}" "${candump_log}")
+
+set(candump_short_log "${CMAKE_CURRENT_BINARY_DIR}/interface-filter-short-frame.log")
+file(WRITE "${candump_short_log}" "(2.000000) can2 124#01\n")
+expect_replay("Invalid payload length on an unselected interface" 1 ""
+  "interface-filter-short-frame[.]log:1: expected 2 payload bytes"
+  --candump --interface can1 "${dbc}" "${candump_short_log}")
+expect_replay("Interface requires candump input" 2 "" "--interface requires --candump"
+  --interface can1 "${dbc}" "${log}")
+expect_replay("Interface name must be one token" 2 "" "invalid interface name for --interface"
+  --candump --interface "can 1" "${dbc}" "${candump_log}")
+expect_replay("Missing interface operand" 2 "" "." --candump --interface)
+
 expect_replay("CSV without matching frames" 0 "${csv_header}" "^$"
   --csv --id 125 "${dbc}" "${log}")
 
