@@ -62,6 +62,21 @@ if(NOT result STREQUAL "1" OR NOT output STREQUAL "" OR NOT errors MATCHES "shor
   message(FATAL_ERROR "Short frame exit=${result}\nStdout:\n${output}\nStderr:\n${errors}")
 endif()
 
+set(out_of_order_log "${CMAKE_CURRENT_BINARY_DIR}/out-of-order.log")
+file(WRITE "${out_of_order_log}" "2 003 FE3F\n1 003 0500\n")
+foreach(option IN ITEMS "" --aggregate)
+  execute_process(
+    COMMAND "${REPLAY}" ${option} "${EXAMPLES}/example.dbc" "${out_of_order_log}"
+    RESULT_VARIABLE result
+    ERROR_VARIABLE errors
+    OUTPUT_QUIET
+    TIMEOUT 3
+  )
+  if(NOT result STREQUAL "1" OR NOT errors MATCHES "out-of-order[.]log:2: timestamps must be nondecreasing")
+    message(FATAL_ERROR "Out-of-order three-column replay ${option} exit=${result}\nStderr:\n${errors}")
+  endif()
+endforeach()
+
 set(stdin_short_log "${CMAKE_CURRENT_BINARY_DIR}/stdin-short-frame.log")
 file(WRITE "${stdin_short_log}" "# Recorded frame follows\n0 003 FE")
 execute_process(
@@ -92,7 +107,7 @@ endif()
 
 set(candump_log "${CMAKE_CURRENT_BINARY_DIR}/candump.log")
 file(WRITE "${candump_log}"
-  "(0.000001) vcan0 003#FE3F R\n(0.000001001) vcan0 003#0500\n(0.000002) vcan1 007#0080\n")
+  "(0.000001) vcan0 003#FE3F R\n(0.000002) vcan1 007#0080\n(0.000001001) vcan0 003#0500\n")
 execute_process(
   COMMAND "${REPLAY}" --candump "${EXAMPLES}/example.dbc" "${candump_log}"
   RESULT_VARIABLE result
@@ -100,9 +115,22 @@ execute_process(
   ERROR_VARIABLE errors
   TIMEOUT 3
 )
-set(expected "0.000001 vcan0 003 GPSAltitude.GPSAltitude=-2\n0.000001001 vcan0 003 GPSAltitude.GPSAltitude=5\n0.000002 vcan1 007 PowerState.PowerState=2\n")
+set(expected "0.000001 vcan0 003 GPSAltitude.GPSAltitude=-2\n0.000002 vcan1 007 PowerState.PowerState=2\n0.000001001 vcan0 003 GPSAltitude.GPSAltitude=5\n")
 if(NOT result STREQUAL "0" OR NOT output STREQUAL expected OR NOT errors STREQUAL "")
   message(FATAL_ERROR "Candump replay exit=${result}\nExpected:\n${expected}\nActual:\n${output}\nStderr:\n${errors}")
+endif()
+
+set(invalid_candump_log "${CMAKE_CURRENT_BINARY_DIR}/invalid-candump.log")
+file(WRITE "${invalid_candump_log}" "(0.0000a1) vcan0 003#FE3F\n")
+execute_process(
+  COMMAND "${REPLAY}" --candump "${EXAMPLES}/example.dbc" "${invalid_candump_log}"
+  RESULT_VARIABLE result
+  OUTPUT_VARIABLE output
+  ERROR_VARIABLE errors
+  TIMEOUT 3
+)
+if(NOT result STREQUAL "1" OR NOT output STREQUAL "" OR NOT errors MATCHES "invalid-candump[.]log:1: expected a candump timestamp")
+  message(FATAL_ERROR "Invalid candump timestamp replay exit=${result}\nStdout:\n${output}\nStderr:\n${errors}")
 endif()
 
 set(csv_dbc "${CMAKE_CURRENT_BINARY_DIR}/csv-signal.dbc")
