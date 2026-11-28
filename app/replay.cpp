@@ -16,6 +16,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -31,6 +32,7 @@ struct EngineeringScale {
 using SelectorRanges = std::vector<std::pair<unsigned, unsigned>>;
 using SignalValues = std::vector<std::optional<std::uint64_t>>;
 using IdentifierFilter = std::unordered_set<std::uint32_t>;
+using InterfaceFilter = std::unordered_set<std::string_view>;
 
 struct SelectorCondition {
     std::size_t selector;
@@ -357,7 +359,8 @@ void print_packet(const Database& db, const can::frame_packet& packet,
 }
 
 void replay(const Database& db, const char* path, bool physical, bool candump, bool csv,
-            can::v2c_transcoder* transcoder, const IdentifierFilter& identifiers) {
+            can::v2c_transcoder* transcoder, const IdentifierFilter& identifiers,
+            const InterfaceFilter& interfaces) {
     const bool from_stdin = std::string_view{path} == "-";
     std::ifstream file;
     if (!from_stdin) {
@@ -452,7 +455,8 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
             print_packet(db, packet, identifiers);
             continue;
         }
-        if (it == db.messages.end() || (!identifiers.empty() && !identifiers.contains(id))) {
+        if (it == db.messages.end() || (!identifiers.empty() && !identifiers.contains(id)) ||
+            (!interfaces.empty() && !interfaces.contains(interface_name))) {
             continue;
         }
         const auto& msg = it->second;
@@ -515,9 +519,10 @@ void replay(const Database& db, const char* path, bool physical, bool candump, b
 int main(int argc, char* argv[]) {
     constexpr auto usage =
         "Usage: can-telemetry-replay [--physical] [--candump] [--csv] [--id HEX]... "
-        "<database.dbc> <frames.log>\n"
+        "[--interface IFACE]... <database.dbc> <frames.log>\n"
         "       can-telemetry-replay --aggregate [--id HEX]... <database.dbc> <frames.log>\n"
         "Use three hex digits for a standard ID and eight for an extended ID.\n"
+        "--interface requires --candump.\n"
         "Pass - as <frames.log> to read from standard input.\n";
     if (argc == 2 && std::string_view{argv[1]} == "--help") {
         std::cout << usage;
@@ -528,6 +533,7 @@ int main(int argc, char* argv[]) {
     bool csv = false;
     bool aggregate = false;
     IdentifierFilter identifiers;
+    InterfaceFilter interfaces;
     int input = 1;
     for (; input < argc; ++input) {
         const std::string_view option{argv[input]};
@@ -550,6 +556,17 @@ int main(int argc, char* argv[]) {
                 return 2;
             }
             identifiers.insert(id);
+        } else if (option == "--interface") {
+            if (++input == argc) {
+                std::cerr << usage;
+                return 2;
+            }
+            const std::string_view name{argv[input]};
+            if (name.empty() || name.find_first_of(" \t\r\n\v\f") != std::string_view::npos) {
+                std::cerr << "invalid interface name for --interface\n";
+                return 2;
+            }
+            interfaces.insert(name);
         } else {
             break;
         }
@@ -558,11 +575,15 @@ int main(int argc, char* argv[]) {
         std::cerr << usage;
         return 2;
     }
+    if (!interfaces.empty() && !candump) {
+        std::cerr << "--interface requires --candump\n";
+        return 2;
+    }
     try {
         can::v2c_transcoder transcoder{};
         auto* aggregator = aggregate ? &transcoder : nullptr;
         replay(load_database(argv[input], aggregator), argv[input + 1], physical, candump, csv,
-               aggregator, identifiers);
+               aggregator, identifiers, interfaces);
         if (!std::cout.flush()) {
             throw std::runtime_error("could not write replay output");
         }
